@@ -9,3 +9,13 @@
 - `[[ "$VAR" =~ ^[0-9]+$ ]]` → validate a variable is a clean integer before trusting it in math
 - `exit 0/1/2` → standard health-check convention: OK / WARNING / UNKNOWN-failure
 - `chmod +x` → required before a script file can be run directly
+
+## M01-P02 — Process Hunting (Find & Kill Runaway Process)
+
+- `pgrep <name>` → find PID by process name (only works well if name is specific enough)
+- `pgrep -f "pattern"` → match against full command line (needed for generic names like `bash`, `python`)
+- `kill <PID>` → SIGTERM, polite shutdown request, always try first
+- `kill -9 <PID>` → SIGKILL, forceful termination, no cleanup — use only if SIGTERM fails
+- `kill` does NOT read PIDs from piped input — needs `xargs` or `$(...)` to combine with `pgrep`
+- `pgrep -f "pattern" | xargs kill -9` or `kill -9 $(pgrep -f "pattern")` → one-line find-and-kill, useful in scripts
+- Always start a fresh target process before testing a second kill method — testing against an already-dead process gives misleading errors
