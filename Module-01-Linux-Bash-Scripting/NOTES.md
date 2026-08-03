@@ -19,3 +19,15 @@
 - `kill` does NOT read PIDs from piped input — needs `xargs` or `$(...)` to combine with `pgrep`
 - `pgrep -f "pattern" | xargs kill -9` or `kill -9 $(pgrep -f "pattern")` → one-line find-and-kill, useful in scripts
 - Always start a fresh target process before testing a second kill method — testing against an already-dead process gives misleading errors
+
+## M01-P03 — Permissions Incident (Permission Denied)
+
+- "Permission denied" running a script can have TWO different root causes:
+  1. Execute bit not set at all → fix with `chmod +x file`
+  2. Execute bit set, but for the wrong owner/group → fix with `chown user:group file`
+- Always run `ls -l file` FIRST and check both:
+  - Is there an `x` anywhere in the permission string?
+  - Does the owner/group match the user trying to run it?
+- Never default to `chmod 777` — grants read/write/execute to EVERYONE, violates least-privilege, and hides the real root cause instead of fixing it
+- Only the file's owner (or root) can change its permissions — `chmod` on a file you don't own fails with "Operation not permitted"
+- `printf '...\n'` is more reliable than `echo -e` for writing multi-line scripts to a file
