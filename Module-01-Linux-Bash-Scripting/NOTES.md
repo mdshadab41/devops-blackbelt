@@ -41,3 +41,10 @@
 - `set -e` → script stops immediately if any command fails, prevents cascading errors from a script continuing after a failure
 - Explicit precondition checks (`if [ ! -f "$FILE" ]; then ... exit 1; fi`) catch problems early with a clear message, instead of relying on a later command to fail cryptically
 - Always verify a script's file content with `cat` before re-running after an edit — faster than trial-and-error debugging
+
+## M01-P05 — Debug the Broken Backup Script
+
+- No spaces allowed around `=` in bash variable assignments (`VAR=value`, not `VAR = value`) — spaces make bash treat the first word as a command to run, not a variable name
+- `mkdir` errors if the target already exists; `mkdir -p` creates it only if needed, and also creates nested/missing parent folders in one go
+- `cp source/* destination` requires `destination` to already exist AS A DIRECTORY when copying multiple files — a non-existent path as destination will fail
+- Real debugging technique: trace what each line of a script actually produces, then check whether the NEXT line's assumptions are satisfied by that — don't just guess or run trial-and-error
