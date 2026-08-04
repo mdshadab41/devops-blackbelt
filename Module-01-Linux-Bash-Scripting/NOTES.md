@@ -31,3 +31,13 @@
 - Never default to `chmod 777` — grants read/write/execute to EVERYONE, violates least-privilege, and hides the real root cause instead of fixing it
 - Only the file's owner (or root) can change its permissions — `chmod` on a file you don't own fails with "Operation not permitted"
 - `printf '...\n'` is more reliable than `echo -e` for writing multi-line scripts to a file
+
+## M01-P04 — Log Rotation & Cleanup Script
+
+- `date +%Y-%m-%d_%H-%M-%S` → timestamp with second precision, prevents filename collisions
+- Date-only filenames (`app.log.2026-08-04`) cause SILENT DATA LOSS if script runs more than once per day — `mv` overwrites existing files with no warning
+- `mv` never warns before overwriting an existing destination file — always ensure destination filenames are unique
+- `find "$DIR" -name "pattern" -mtime "+$DAYS" -delete` → safe, direct way to clean up old files by age (safer than piping to `rm`)
+- `set -e` → script stops immediately if any command fails, prevents cascading errors from a script continuing after a failure
+- Explicit precondition checks (`if [ ! -f "$FILE" ]; then ... exit 1; fi`) catch problems early with a clear message, instead of relying on a later command to fail cryptically
+- Always verify a script's file content with `cat` before re-running after an edit — faster than trial-and-error debugging
