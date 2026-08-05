@@ -48,3 +48,11 @@
 - `mkdir` errors if the target already exists; `mkdir -p` creates it only if needed, and also creates nested/missing parent folders in one go
 - `cp source/* destination` requires `destination` to already exist AS A DIRECTORY when copying multiple files — a non-existent path as destination will fail
 - Real debugging technique: trace what each line of a script actually produces, then check whether the NEXT line's assumptions are satisfied by that — don't just guess or run trial-and-error
+
+## M01-P06 — Cron Job Silently Failing
+
+- Cron gives NO visibility into output or errors by default — both stdout and stderr vanish unless explicitly redirected
+- `>> logfile 2>&1` → redirect stdout to a file (append), then redirect stderr to wherever stdout is now pointing (the same file). Order matters — this exact sequence is required.
+- A script without `set -e` can keep running after a real failure and print a false "success" message — always verify exit codes, not just printed text
+- Real incident investigation technique: compare file timestamps against the current time to detect a job that's silently stopped updating, even when there's no visible error anywhere
+- Two separate concerns: VISIBILITY (can you see the failure?) and HONESTY (does the script correctly report failure?) — fixing one doesn't fix the other; production scripts need both

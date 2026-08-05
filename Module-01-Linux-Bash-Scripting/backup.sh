@@ -1,5 +1,5 @@
 #!/bin/bash
-
+set -e
 SOURCE_DIR=~/important-data
 BACKUP_DIR=~/backups
 DATE=$(date +%Y-%m-%d)
