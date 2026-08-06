@@ -56,3 +56,23 @@
 - A script without `set -e` can keep running after a real failure and print a false "success" message — always verify exit codes, not just printed text
 - Real incident investigation technique: compare file timestamps against the current time to detect a job that's silently stopped updating, even when there's no visible error anywhere
 - Two separate concerns: VISIBILITY (can you see the failure?) and HONESTY (does the script correctly report failure?) — fixing one doesn't fix the other; production scripts need both
+
+
+## M01-P07 — Multi-Check Health Monitoring Script
+
+- Real monitoring scripts check MULTIPLE things and combine results into ONE overall status — never average severities, always report the WORST one found
+- CRITICAL (highest severity) can be set directly, no guard needed — it's always safe since nothing is worse
+- WARNING (middle severity) needs a guard (`if [ "$STATUS" -lt 1 ]`) — otherwise it could downgrade an already-worse CRITICAL result from an earlier check
+- `free -m` → memory in MB; use `available` column (not `free`) for realistic usage %, since Linux uses spare RAM for reclaimable disk cache
+- `read VAR1 VAR2 <<< "$(command)"` → splits command output into multiple variables at once
+- Integer math in bash (`$(( ))`) — multiply BEFORE dividing to avoid losing precision (no decimals supported)
+- `pgrep <name>` used directly in `if pgrep name > /dev/null; then` — pgrep's own exit code (0=found, 1=not found) can drive the if/else directly, no need to capture output
+- `pgrep` process name matching is limited to ~15 characters — use `-f` for longer/full command-line matches
+- One combined health-check script > multiple separate scripts — gives monitoring systems ONE clear signal instead of fragmented alerts for what might be one root cause
+
+
+
+
+
+
+
