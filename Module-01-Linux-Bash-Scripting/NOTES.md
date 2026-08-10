@@ -103,3 +103,12 @@
 - Verify a file is safe to delete before removing it: check ownership, `lsof` (is it open?), timing correlation, and naming pattern
 - Real incidents always end with a written RCA — the deliverable isn't just "fixed it," it's the documented reasoning and prevention plan
 
+## M01-P11 — Production-Grade Reusable Script Template
+
+- `log()` function pattern: timestamped, leveled logging (`INFO`/`WARN`/`ERROR`) instead of plain `echo` — essential for real incident investigation later
+- `local` inside a function → variable only exists within that function, doesn't leak into the rest of the script
+- `shift` → drops $1, shifting $2→$1 etc. — used to pass "the rest of the arguments" as a single message
+- `mktemp` → creates a real, safely-unique temp file/path — safer than inventing your own temp filename
+- `trap cleanup EXIT` → guarantees a cleanup function runs on EVERY exit path (success, error, interruption) — NOT the same as putting cleanup code at the bottom of a script, which only runs on the "happy path" and gets skipped if anything fails first
+- `[ -z "$1" ]` → checks if an argument is missing/empty; `$0` → the script's own name, useful for usage messages
+- This template combines every production pattern from the module: logging, guaranteed cleanup, input validation, `set -e`, proper exit codes — intended as a reusable starting point for future scripts
