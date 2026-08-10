@@ -95,5 +95,11 @@
 - Standard log investigation pattern: `grep` (filter) → `awk` (extract field) → `sort | uniq -c` (summarize/count) → draw conclusion
 - A concentrated cluster of one error type, in one time window, on one/two endpoints → strong signal of a SINGLE root cause, not multiple unrelated issues
 
+## M01-P10 — Production RCA: Service Down (Full Investigation)
 
+- Full end-to-end incident investigation combining ALL prior Module 01 skills: symptom confirmation → log check → CPU/memory check → disk check → drill-down → safe verification → fix → recovery verification
+- A process disappearing with no error trace in its own log often points to an EXTERNAL cause (resource exhaustion, kill signal), not an internal crash
+- Disk-full incidents can silently take down unrelated services — check disk usage early, not last, in "service is down" investigations
+- Verify a file is safe to delete before removing it: check ownership, `lsof` (is it open?), timing correlation, and naming pattern
+- Real incidents always end with a written RCA — the deliverable isn't just "fixed it," it's the documented reasoning and prevention plan
 
