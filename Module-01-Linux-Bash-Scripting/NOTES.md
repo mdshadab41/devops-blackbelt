@@ -112,3 +112,11 @@
 - `trap cleanup EXIT` → guarantees a cleanup function runs on EVERY exit path (success, error, interruption) — NOT the same as putting cleanup code at the bottom of a script, which only runs on the "happy path" and gets skipped if anything fails first
 - `[ -z "$1" ]` → checks if an argument is missing/empty; `$0` → the script's own name, useful for usage messages
 - This template combines every production pattern from the module: logging, guaranteed cleanup, input validation, `set -e`, proper exit codes — intended as a reusable starting point for future scripts
+
+## M01-P12 — Timed Interview Debug Challenge
+
+- `for file in $VAR` loops over $VAR as ONE item (the whole string); `for file in $VAR/*` expands the wildcard first, correctly looping over each item inside
+- A script can print "success" while still doing the wrong thing — ALWAYS verify with a real check (`ls -la`, `cat`), never trust printed output alone
+- Missing `mkdir -p` before writing multiple files into a destination path can cause `cp` to silently create a FILE instead of a directory — subsequent copies then overwrite each other, destroying data
+- Bash does NOT error on undefined/mistyped variable names — they silently expand to an empty string. Always double-check variable name spelling matches exactly between definition and usage.
+- Three most common real bash bug categories: (1) wildcard/expansion mistakes, (2) missing directory creation before writing files, (3) variable name typos — worth checking for these first in any script review
