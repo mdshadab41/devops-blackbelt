@@ -70,7 +70,19 @@
 - `pgrep` process name matching is limited to ~15 characters — use `-f` for longer/full command-line matches
 - One combined health-check script > multiple separate scripts — gives monitoring systems ONE clear signal instead of fragmented alerts for what might be one root cause
 
+## M01-P08 — "Server Is Slow" Bottleneck Investigation
 
+- Systematic order for investigating slowness: CPU → Memory → Disk I/O → specific process (broad to narrow, same top-down approach as disk investigation in M01-P01)
+- `uptime` / load average → quick first signal something's busy, but doesn't say WHAT kind of busy
+- `top`'s `%Cpu(s)` line is the key diagnostic:
+  - High `us`/`sy`, near-0 `wa`, near-0 `id` → CPU-bound (real work maxing out the CPU)
+  - High `id` but elevated `wa` → misleading at a glance ("CPU has headroom") but actually I/O-bound — often caused by memory pressure forcing swap usage
+- `free -m` Swap row → cross-check swap `used` alongside `top`'s `wa` value to confirm memory-pressure-driven slowdowns
+- Once memory pressure is relieved, swap `used` does NOT automatically return to 0 — Linux only moves data back from swap when something actively needs it again; lingering swap usage is normal, not a bug
+- Swap setup: `fallocate -l SIZE /swapfile` → `chmod 600` (security, RAM can hold sensitive data) → `mkswap` (format) → `swapon` (activate)
+- Swap teardown: ALWAYS `swapoff` before `rm` — deleting an active swap file without disabling it first can cause real problems
+- `stress --vm 1 --vm-bytes SIZE --timeout Ns` → controlled, safe way to simulate memory pressure for testing (installed via `apt install stress`)
+- Same symptom ("slow") can have completely different — even opposite — CPU profiles depending on true root cause; never diagnose from one signal alone
 
 
 
