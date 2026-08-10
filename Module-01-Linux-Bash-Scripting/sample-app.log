@@ -1,0 +1,13 @@
+2026-08-09 09:15:02 INFO /api/users 200
+2026-08-09 09:15:05 INFO /api/orders 200
+2026-08-09 10:02:11 WARNING /api/users 429
+2026-08-09 14:03:22 ERROR /api/checkout 500 Database connection timeout
+2026-08-09 14:05:10 ERROR /api/checkout 500 Database connection timeout
+2026-08-09 14:12:45 ERROR /api/payment 500 Database connection timeout
+2026-08-09 14:20:01 ERROR /api/checkout 503 Service unavailable
+2026-08-09 14:33:18 INFO /api/users 200
+2026-08-09 14:41:59 ERROR /api/payment 500 Database connection timeout
+2026-08-09 14:55:03 ERROR /api/checkout 500 Database connection timeout
+2026-08-09 15:10:00 INFO /api/orders 200
+2026-08-09 16:00:00 WARNING /api/orders 429
+2026-08-10 08:00:00 INFO /api/users 200

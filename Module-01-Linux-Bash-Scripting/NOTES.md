@@ -84,7 +84,16 @@
 - `stress --vm 1 --vm-bytes SIZE --timeout Ns` → controlled, safe way to simulate memory pressure for testing (installed via `apt install stress`)
 - Same symptom ("slow") can have completely different — even opposite — CPU profiles depending on true root cause; never diagnose from one signal alone
 
+## M01-P09 — Text Processing (grep/awk/sed) on Log Files
 
+- `grep "pattern" file` → find matching lines; `-c` → count matches directly (no need to pipe to `wc -l`)
+- `grep "A.*B" file` → matches lines containing A, followed eventually by B (both conditions on one line)
+- Chaining `grep | grep` → progressively narrows results, same idea as combining filters
+- `awk '{print $N}'` → extract column N from each line (columns are whitespace-separated by default)
+- `sort | uniq -c` → classic pattern to count occurrences of unique values — MUST sort first, since uniq only collapses ADJACENT duplicates
+- `sed 's/find/replace/'` → substitute text; does NOT modify the file unless `-i` flag is used (safe by default, just transforms output)
+- Standard log investigation pattern: `grep` (filter) → `awk` (extract field) → `sort | uniq -c` (summarize/count) → draw conclusion
+- A concentrated cluster of one error type, in one time window, on one/two endpoints → strong signal of a SINGLE root cause, not multiple unrelated issues
 
 
 
