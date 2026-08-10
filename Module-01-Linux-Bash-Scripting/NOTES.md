@@ -120,3 +120,13 @@
 - Missing `mkdir -p` before writing multiple files into a destination path can cause `cp` to silently create a FILE instead of a directory — subsequent copies then overwrite each other, destroying data
 - Bash does NOT error on undefined/mistyped variable names — they silently expand to an empty string. Always double-check variable name spelling matches exactly between definition and usage.
 - Three most common real bash bug categories: (1) wildcard/expansion mistakes, (2) missing directory creation before writing files, (3) variable name typos — worth checking for these first in any script review
+
+
+## M01-MINI — Server Health Snapshot Tool
+
+- Combined disk, memory, and process checks (M01-P07) with structured logging + trap/error-handling patterns (M01-P11) into one reusable CLI tool
+- Tool accepts process name as a command-line argument — reusable for checking ANY process, not hardcoded to one
+- Logs both to terminal AND to a persistent log file (`~/server_snapshot.log`) for historical record-keeping
+- KNOWN LIMITATION discovered: `pgrep -f "name"` matches against the FULL command line of every process — if the searched name happens to also appear in the checking script's OWN arguments/command line, pgrep can falsely match the checker itself (or related subshell/pipeline processes bash spawns internally)
+- This is a genuine edge case, not something to over-engineer around — avoided in practice by only checking for real service/daemon names (sshd, nginx, docker) that would never coincidentally overlap with a health-check script's own invocation
+- `bash -x script.sh` → traces every executed command with variables substituted — powerful for debugging when output doesn't match expectations and the cause isn't obvious from reading the script alone
