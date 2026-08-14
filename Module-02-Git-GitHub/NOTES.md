@@ -71,3 +71,48 @@ head (lowercase) is not recognized -> "ambiguous argument" error.
 
 **diff format reminder:** '+' = line added, '-' = line removed,
 @@ -0,0 +1,2 @@ = hunk header showing line range affected.
+
+## M02-P02 — Branching Basics
+
+**Concept:** A branch is just a POINTER to a commit, not a copy of files.
+Creating a branch is instant regardless of repo size because of this.
+
+**Commands learned:**
+- git branch <name>     - create a new branch pointer (does NOT switch to it)
+- git switch <name>     - move HEAD to a different branch (modern command, 2.23+)
+- git branch            - list branches, * marks current one
+- git merge <name>      - bring another branch's commits into current branch
+- git branch -d <name>  - delete a branch (safe: refuses if unmerged work exists)
+- git log --oneline --all --graph  - visualize branch history/divergence
+
+**Fast-forward merge:** happens when the target branch (e.g. main) has NOT
+moved since the feature branch was created. Git just slides main's pointer
+forward to match - no new commit, no combining, no conflict possible.
+
+**Real merge (contrast, covered next in M02-P03):** happens when BOTH
+branches have new commits since diverging. Git creates a new merge commit
+with two parents to combine both histories. This is where conflicts can occur.
+
+**Simple analogy:** Fast-forward = other branch stood still, so just catch up.
+Real merge = both branches moved on different paths, so stitch them together.
+
+## M02-P02 — Live Proof: Non-fast-forward merge with ZERO conflict
+
+**Setup:** Created feature-changelog branch, committed CHANGELOG.md on it.
+Meanwhile, committed LICENSE.md directly on main (different file, no overlap).
+
+**Result of merge:** Git created a MERGE COMMIT (two parents), NOT a
+fast-forward — even though the two files never touched the same lines
+and Git needed zero help resolving anything.
+
+**Key lesson:** Fast-forward vs real merge depends ONLY on whether the
+target branch (main) moved since divergence. Conflict is a SEPARATE
+question - it only determines whether Git needs manual help combining
+overlapping changes. A conflict-free real merge still produces a
+merge commit; only a completely untouched target branch fast-forwards.
+
+**Commands used in this exercise:**
+- git switch -c <name>        - create + switch to new branch in one step
+- git branch -m <old> <new>   - rename a branch (fixes typos safely)
+- git log branchA..branchB    - show commits on branchB not in branchA
+- git log --oneline --all --graph  - visualize all branches + merge commits
