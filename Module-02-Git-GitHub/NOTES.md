@@ -148,3 +148,33 @@ goes wrong mid-way.
 
 **Key insight:** conflicts are not repo corruption - Git is refusing to
 guess at something only a human can judge (meaning/intent, not just text).
+
+## M02-P04 — Production Incident: Committed to Wrong Branch
+
+**Scenario:** Made commits directly on main by mistake instead of on a
+feature branch. main must stay clean; commits must NOT be lost.
+
+**The fix (2 steps):**
+1. git branch <new-branch-name>
+   - Creates a new branch pointer AT THE CURRENT COMMIT (wherever HEAD
+     is right now). Captures the mistaken commits under a new label.
+2. git reset --hard <last-good-commit-hash>
+   - Moves the CURRENT branch's pointer (main) back to where it should
+     be. Also updates working directory files to match.
+   - Nothing is deleted - the commits still exist, just no longer
+     "owned" by main. Proven by switching to the new branch and seeing
+     the files reappear.
+
+**Why reset --hard was SAFE here:** because another pointer
+(feature-todo-tracking) was already referencing those commits BEFORE
+main moved away from them. reset --hard is only dangerous when the
+commits being reset past have NO other pointer (branch/tag) referencing
+them - then they become unreachable (recoverable only via reflog,
+covered in M02-P07).
+
+**Golden rule:** before running reset --hard, always make sure the
+commits you might lose are reachable from some other branch first.
+
+**Core insight:** branches are just labels/pointers on commits. Fixing
+"wrong branch" mistakes is just relabeling which pointer claims which
+commits - not undoing or rewriting any actual work.
