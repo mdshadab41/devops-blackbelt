@@ -116,3 +116,35 @@ merge commit; only a completely untouched target branch fast-forwards.
 - git branch -m <old> <new>   - rename a branch (fixes typos safely)
 - git log branchA..branchB    - show commits on branchB not in branchA
 - git log --oneline --all --graph  - visualize all branches + merge commits
+
+## M02-P03 — First Merge Conflict
+
+**What triggers a conflict:** Git auto-merges whenever changes DON'T
+overlap on the same lines of the same file (proven in M02-P02). A
+conflict only happens when both branches changed the SAME LINE(S) of
+the SAME FILE in DIFFERENT ways - at that point Git can't algorithmically
+decide which version is "correct," so it stops and asks a human.
+
+**Conflict markers explained:**
+<<<<<<< HEAD           <- start of YOUR current branch's version
+(your branch's lines)
+=======                 <- divider between the two versions
+(incoming branch's lines)
+>>>>>>> branch-name     <- end, labeled with the incoming branch's name
+
+**Resolution steps:**
+1. git merge <branch>          - triggers the conflict, Git pauses mid-merge
+2. git status                  - shows "both modified" files
+3. Open the file, manually edit out ALL markers, decide final content
+   (options: keep mine / keep theirs / combine both / write something new)
+4. git add <file>               - marks this file's conflict as resolved
+5. git status                  - confirms "All conflicts fixed but still merging"
+6. git commit (no -m)          - opens editor with pre-filled merge message,
+   save+exit to finalize the merge commit
+
+**Escape hatch:** git merge --abort - bails out completely, resets back
+to exactly before the merge attempt. Good to know if a conflict resolution
+goes wrong mid-way.
+
+**Key insight:** conflicts are not repo corruption - Git is refusing to
+guess at something only a human can judge (meaning/intent, not just text).
