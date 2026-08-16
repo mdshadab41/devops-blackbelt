@@ -178,3 +178,27 @@ commits you might lose are reachable from some other branch first.
 **Core insight:** branches are just labels/pointers on commits. Fixing
 "wrong branch" mistakes is just relabeling which pointer claims which
 commits - not undoing or rewriting any actual work.
+
+## M02-P04 — Exercise Detour: Reset on the WRONG branch (real mistake, real recovery)
+
+**What happened:** Created a safety branch with `git switch -c <name>`,
+which auto-switches onto it. Then ran `git reset --hard <hash>` while
+standing on the SAFETY BRANCH (not main) - so the safety branch got
+reset, not main. main still held the 3 mistake commits, untouched.
+
+**Key lesson:** git reset --hard ALWAYS affects whichever branch HEAD
+currently points to - never assume it acts on "the branch I meant."
+Always check `git branch` (look for the *) right before running reset.
+
+**The recovery (when a branch pointer gets lost entirely):**
+git reflog
+  - shows a full history of everywhere HEAD has pointed, including
+    commits no branch currently references. Default retention ~90 days.
+git branch <new-name> <commit-hash-from-reflog>
+  - creates a branch pointing at that EXACT commit (not "wherever
+    HEAD is now" - explicit hash instead), recovering the lost work.
+
+**Big takeaway:** git reflog is Git's real safety net. Even a botched
+reset/checkout/rebase rarely loses work permanently, AS LONG AS the
+commit was ever committed or checked out locally. This is why Git is
+very hard to truly lose work in, even when you mess up.
