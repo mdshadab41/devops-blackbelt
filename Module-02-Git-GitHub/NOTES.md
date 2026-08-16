@@ -229,3 +229,38 @@ yet. Once something is pushed and others may have it, use revert instead.
 stayed visible in log) -> then reset --soft past the revert commit
 (revert commit vanished from history entirely, but its file changes
 stayed staged, not lost) -> recommitted to get a clean final state.
+
+## M02-P06 — Interactive Rebase (squashing messy commits)
+
+**What it's for:** cleaning up your OWN local, unpushed commits before
+opening a PR - turning "wip / fix typo / actually forgot this" into
+one clean, reviewable commit.
+
+**Command:** git rebase -i HEAD~N
+  - opens editor with last N commits listed OLDEST-first (reverse of
+    git log order)
+  - each line: <action> <hash> <message>
+
+**Key actions available:**
+- pick    - keep this commit as-is
+- squash (s) - merge this commit's changes INTO the previous commit,
+  and combine their messages (prompts for a new combined message)
+- fixup   - like squash, but silently discards this commit's message
+- reword  - keep the commit's changes, but edit its message
+- drop    - remove this commit entirely
+
+**What happens:** first editor screen = pick your actions.
+Second editor screen (if squashing) = write ONE final commit message
+replacing all the squashed messages.
+
+**Why squashed commits get a NEW hash:** a commit's hash is calculated
+from its content (files changed + message + author + timestamp + PARENT
+commit's hash). Squashing creates genuinely new content (new combined
+diff, new message) so Git computes a fresh hash - it's not reusing an
+old one. This also means every commit AFTER the rebased ones gets a
+new hash too, since each commit's hash depends on its parent's hash -
+one small rebase early in a chain reshapes the entire chain after it.
+
+**Golden rule (same as reset):** only rebase commits nobody else has
+pulled yet. Rebasing shared/pushed history creates the same
+history-disagreement problem as reset --hard on shared commits.
