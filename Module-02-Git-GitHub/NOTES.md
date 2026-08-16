@@ -202,3 +202,30 @@ git branch <new-name> <commit-hash-from-reflog>
 reset/checkout/rebase rarely loses work permanently, AS LONG AS the
 commit was ever committed or checked out locally. This is why Git is
 very hard to truly lose work in, even when you mess up.
+
+## M02-P05 — Undo Chaos: reset vs revert vs restore
+
+**The three "undo" tools and when to use each:**
+
+| Command              | Touches                          | Rewrites history? | Use when...                          |
+|-----------------------|-----------------------------------|--------------------|----------------------------------------|
+| git restore           | Working dir / staging only        | No (no commits)   | Undoing UNCOMMITTED changes            |
+| git revert            | Adds a NEW commit                 | No (original stays visible) | Undoing something ALREADY PUSHED/shared |
+| git reset --soft      | Moves branch pointer, keeps changes staged | Yes | Redoing/squashing OWN unpushed commits |
+| git reset --hard      | Moves branch pointer + wipes working dir | Yes | Fully discarding unpushed commits (use safety-branch trick if unsure) |
+
+**Why revert is safe for shared/pushed commits, reset is dangerous:**
+Analogy: revert = "sending a correction message" in a group chat -
+everyone still sees the original + the fix, no confusion.
+reset (on shared history) = "deleting your original message" after
+someone already read/replied to it - their reply now references
+something that no longer exists on your side. This is how force-pushed
+reset causes real teammate conflicts and lost/orphaned work.
+
+**Golden rule:** reset is only safe on commits NOBODY ELSE has pulled
+yet. Once something is pushed and others may have it, use revert instead.
+
+**Proven live:** reverted a commit (content undone, original commit
+stayed visible in log) -> then reset --soft past the revert commit
+(revert commit vanished from history entirely, but its file changes
+stayed staged, not lost) -> recommitted to get a clean final state.
