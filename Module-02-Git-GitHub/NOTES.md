@@ -264,3 +264,35 @@ one small rebase early in a chain reshapes the entire chain after it.
 **Golden rule (same as reset):** only rebase commits nobody else has
 pulled yet. Rebasing shared/pushed history creates the same
 history-disagreement problem as reset --hard on shared commits.
+
+## M02-P07 — Production Incident: Teammate Force-Pushed
+
+**Scenario:** Teammate ran `git reset --hard` + `git push --force` on a
+shared branch, wiping a commit off the remote that you had already pushed.
+
+**How to detect it:** git fetch origin, then compare:
+git log --oneline origin/main   vs   git log --oneline main
+If your LOCAL branch still has commits that origin/main doesn't -
+those commits are safe, they just got removed from the REMOTE, not
+from your machine. `git fetch` (unlike pull) never touches your local
+branch, only updates what you know about the remote.
+
+**Fetch output tells you directly:**
+"+ <old>...<new> main -> origin/main (forced update)" - the
+"(forced update)" tag is Git's explicit warning that the remote's
+history was rewritten, not just fast-forwarded normally.
+
+**The fix (if your local branch still has the commit):**
+Just `git push origin main` again - normal push, no --force needed,
+because your commit sits cleanly on top of the remote's current tip.
+Git only checks "does this continue from the remote's CURRENT state" -
+it has no memory of HOW the remote got there (normal push vs force-push).
+
+**Harder variant (if YOUR local branch also lost the commit, e.g. you
+pulled the bad history before checking):** use `git reflog` (from
+M02-P04) to find the lost commit's hash, then `git branch <name> <hash>`
+to recreate a branch pointing at it, then push that branch/commit back.
+
+**Real-world prevention:** branch protection rules (M02-P13) can block
+force-pushes to shared branches entirely - the actual production fix
+for this class of incident is to prevent it, not just recover from it.
