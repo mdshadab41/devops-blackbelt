@@ -350,3 +350,40 @@ to keep it, don't rely on reflog as the primary plan.
 (inspecting a past commit, comparing against a bug report) without
 committing anything - completely safe, just switch back to a branch
 when done looking.
+
+## M02-P10 — GitHub PR Workflow & Merge Strategies
+
+**PR is a GitHub feature, not a Git concept.** Git only knows branches
+and commits; GitHub adds the review/discussion/approval layer on top.
+
+**Real workflow used:**
+1. git switch -c <branch-name>          - create feature branch
+2. commit changes locally
+3. git push -u origin <branch-name>     - push branch, GitHub gives
+   a direct PR creation link in the output
+4. Open PR on GitHub (title + description)
+5. Review "Files changed" tab (GitHub's visual git diff)
+6. Choose a merge strategy, merge
+7. git pull origin main                 - sync merged result locally
+8. Delete branch: git branch -d <name> (local) +
+   git push origin --delete <name> (remote) - full cleanup
+
+**Three merge strategies (GitHub PR merge dropdown):**
+
+| Strategy | Individual commits kept? | Merge commit? | History shape |
+|----------|---------------------------|----------------|----------------|
+| Create a merge commit | Yes, all | Yes | Branches visible in graph |
+| Squash and merge | No - combined into 1 | Yes (the squash itself) | Clean, 1 commit per PR |
+| Rebase and merge | Yes, all | No | Straight line, no branch shape |
+
+**Why squash and merge is common:** guarantees main's history stays
+clean (1 commit per feature) regardless of how messy the branch's
+WIP commits were - no need to manually rebase first (M02-P06).
+
+**Trade-off:** squashing loses fine-grained commit-by-commit history
+within a feature - matters for git bisect (M02-P14), which benefits
+from smaller, more granular commits to narrow down a regression.
+
+**GitHub-specific touch:** squashed commit message auto-includes the
+PR number, e.g. "docs: add CONTRIBUTING.md (#1)" - links back to the
+full PR discussion/description for future reference.
