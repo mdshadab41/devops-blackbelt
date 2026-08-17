@@ -296,3 +296,28 @@ to recreate a branch pointing at it, then push that branch/commit back.
 **Real-world prevention:** branch protection rules (M02-P13) can block
 force-pushes to shared branches entirely - the actual production fix
 for this class of incident is to prevent it, not just recover from it.
+
+## M02-P08 — Cherry-pick a Hotfix
+
+**Scenario:** A fix exists on `dev`, but production runs `main`. dev
+also has unfinished/unrelated commits that must NOT come to main.
+Need exactly one commit, not the whole branch.
+
+**Command:** git cherry-pick <commit-hash>
+  - Applies ONLY that commit's changes onto your current branch
+  - Creates a NEW commit (new hash - same reason as squash in M02-P06:
+    hash depends on content + parent, and parent is different here)
+  - Original commit message is carried over automatically
+
+**Cherry-pick vs merge - the real distinction:**
+- merge <branch>   -> brings in the branch's ENTIRE history (every
+  commit not already on your branch)
+- cherry-pick <hash> -> brings in exactly ONE hand-picked commit,
+  ignoring everything else on that branch
+
+**Real-world use cases:** hotfixes (this scenario), backporting a fix
+to an older release branch, salvaging one good commit from an
+otherwise messy/abandoned branch.
+
+**Analogy:** merge = photocopying someone's entire notebook and adding
+it to yours. cherry-pick = copying just ONE page you actually need.
