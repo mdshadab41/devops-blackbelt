@@ -321,3 +321,32 @@ otherwise messy/abandoned branch.
 
 **Analogy:** merge = photocopying someone's entire notebook and adding
 it to yours. cherry-pick = copying just ONE page you actually need.
+
+## M02-P09 — Detached HEAD State
+
+**Normal state:** HEAD -> branch name -> commit (e.g. HEAD -> main -> 4be6630)
+**Detached state:** HEAD -> commit DIRECTLY, no branch involved
+
+**How to enter it:** git checkout <commit-hash> (or old-style checkout
+of a specific commit instead of a branch name)
+
+**Git's own warning is genuinely useful** - it tells you exactly what
+state you're in and gives you the fix command in advance:
+"git switch -c <new-branch-name>" to save any work before leaving.
+
+**The risk:** commits made while detached are NOT tracked by any
+branch. If you switch to a branch afterward, Git proactively warns:
+"you are leaving N commit(s) behind, not connected to any of your
+branches" - and gives you the exact rescue command:
+git branch <new-branch-name> <commit-hash>
+
+**Why it's not actually dangerous (if you know this):** the commit
+still exists in Git's storage even after switching away - same safety
+net as M02-P04/P07 (findable via reflog even if you forget to branch
+it immediately). But best practice: branch it right away if you want
+to keep it, don't rely on reflog as the primary plan.
+
+**When detached HEAD is useful/safe:** just LOOKING at old code
+(inspecting a past commit, comparing against a bug report) without
+committing anything - completely safe, just switch back to a branch
+when done looking.
