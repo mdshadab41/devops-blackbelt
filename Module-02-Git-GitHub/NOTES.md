@@ -502,3 +502,44 @@ need skill to recover from it correctly. Branch protection is
 PROACTIVE - it changes the system so the incident structurally
 cannot happen at all, regardless of anyone's skill or mistake.
 This is the mindset shift a "Manager Task" problem is really testing.
+
+## M02-P14 — Git Bisect: Binary-Search a Regression
+
+**The problem:** a bug exists NOW, but you don't know which of many
+commits introduced it. Checking each commit one-by-one is slow
+(N tests for N commits).
+
+**The fix - binary search over commit history:**
+git bisect start
+git bisect bad HEAD           - mark current/latest as confirmed BROKEN
+git bisect good <old-commit>  - mark a known-working old commit as GOOD
+  - Git checks out the MIDPOINT commit between good and bad for you
+
+Then repeat for each checkout Git gives you:
+  - test the code manually
+  - git bisect good   (if bug NOT present here)
+  - git bisect bad    (if bug IS present here)
+Git narrows the range by HALF each time, until it reports:
+  "<hash> is the first bad commit"
+
+git bisect reset   - IMPORTANT final step: exits bisect mode, returns
+  you to your original branch (not left in detached HEAD)
+
+**Why it's fast:** each good/bad answer eliminates HALF the remaining
+candidate commits - not just the one tested. This is why it takes
+roughly log2(N) tests instead of N tests:
+- 6 commits  -> ~2-3 tests
+- 100 commits -> ~7 tests
+- 1000 commits -> ~10 tests
+The bigger the commit range, the more dramatic the time savings vs
+checking commits one at a time.
+
+**Key nuance:** "good" doesn't mean "no bugs at all" - it means "the
+SPECIFIC bug I'm hunting is not present here." Proven live: a commit
+where the buggy function didn't even exist yet still correctly counts
+as "good" for this bisect.
+
+**Real-world value:** essential for finding exactly which commit
+introduced a regression across a large history, especially useful in
+combination with automated tests (git bisect run <test-script> can
+even automate the good/bad testing itself).
