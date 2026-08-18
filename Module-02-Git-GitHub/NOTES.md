@@ -419,3 +419,50 @@ the PR.
 
 **Simple analogy:** merge = keep both paths + add a connector commit.
 rebase = erase the fork, pretend your commits were always on the new base.
+
+## M02-P12 — Production Incident: Secrets Committed by Mistake
+
+**Why `git rm <secret-file>` + commit does NOT fix this:**
+Git preserves every past commit's full snapshot forever. Deleting a
+file only changes the CURRENT snapshot going forward - the old commit
+containing the secret is still fully intact and readable via
+`git show <old-commit>:<filename>`. This is the #1 real-world mistake
+that causes actual credential leaks even after "fixing" it.
+
+**The correct tool: git-filter-repo** (modern replacement for the
+deprecated/slower git filter-branch)
+Install: pip install git-filter-repo --break-system-packages
+  - installs to ~/.local/bin - may need to add to PATH:
+    export PATH="$HOME/.local/bin:$PATH"  (add to ~/.bashrc to persist)
+
+**Command:** git filter-repo --path <file> --invert-paths --force
+- --path <file>       - target this specific file
+- --invert-paths      - REMOVE this path from all history (without
+  this flag, filter-repo does the OPPOSITE: keeps ONLY this path)
+- --force             - override the safety check that normally
+  requires running on a fresh clone
+
+**What it actually does:** rewrites EVERY commit in history, rebuilding
+each one as if the file never existed. If a commit's entire content was
+just that file, the commit is removed from history ENTIRELY (not just
+edited). All commit hashes change (same cascading-hash rule as M02-P06).
+
+**Automatic safety feature:** filter-repo removes the 'origin' remote
+after rewriting - forces you to deliberately reconnect and confirm
+before pushing rewritten history anywhere, since force-pushing
+history that others may have already pulled causes the same
+"history disagreement" problem covered in M02-P05/P07.
+
+**CRITICAL - cleaning history is NOT enough by itself:**
+1. Rotate/invalidate the actual credential FIRST, immediately, the
+   moment you realize it was committed/pushed - assume it's
+   compromised regardless of how fast you clean history after.
+2. Clean history with filter-repo (removes FUTURE exposure risk)
+3. Force-push the rewritten history if it was already pushed
+4. Still doesn't undo exposure that already happened - clones, forks,
+   GitHub's own caches, or anyone who already saw it may still have it.
+
+**One-line rule:** deleting a secret's file only stops it from being
+in NEW commits. The secret is still permanently readable in OLD
+commits until you rewrite history with a tool like filter-repo -
+and even then, rotating the actual credential is the real fix.
