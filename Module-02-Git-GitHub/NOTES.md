@@ -387,3 +387,35 @@ from smaller, more granular commits to narrow down a regression.
 **GitHub-specific touch:** squashed commit message auto-includes the
 PR number, e.g. "docs: add CONTRIBUTING.md (#1)" - links back to the
 full PR discussion/description for future reference.
+
+## M02-P11 — Rebase Conflicts (Broken PR scenario)
+
+**Setup:** branch and main both edited the same line differently.
+Instead of merging, tried `git rebase main` to replay branch commits
+on top of the new main - hit a conflict mid-replay.
+
+**Key difference from merge conflicts:**
+- Finishing a MERGE conflict: git add + git commit (creates a NEW
+  merge commit with two parents)
+- Finishing a REBASE conflict: git add + git rebase --continue
+  (rewrites the EXISTING commit in place, no new commit created)
+
+**During rebase, HEAD means something different than usual:**
+HEAD = the base you're rebasing ONTO (e.g. main), not "your branch."
+Conflict markers reflect this - <<<<<<< HEAD shows main's version,
+not your branch's version like in a normal merge conflict.
+
+**Rebase's 3 recovery options (shown directly in the error message):**
+- git rebase --continue  - after fixing conflict, keep replaying
+  remaining commits
+- git rebase --skip      - abandon THIS commit entirely, move to next
+- git rebase --abort     - bail out completely, restore pre-rebase state
+
+**Result:** rebase produces a clean, single-line history (commit
+rewritten to sit directly on new base) - NO merge commit, unlike
+resolving the same conflict via merge. Same benefit as GitHub's
+"Rebase and merge" PR option (M02-P10), done manually before opening
+the PR.
+
+**Simple analogy:** merge = keep both paths + add a connector commit.
+rebase = erase the fork, pretend your commits were always on the new base.
