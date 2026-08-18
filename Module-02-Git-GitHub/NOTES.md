@@ -466,3 +466,39 @@ history that others may have already pulled causes the same
 in NEW commits. The secret is still permanently readable in OLD
 commits until you rewrite history with a tool like filter-repo -
 and even then, rotating the actual credential is the real fix.
+
+## M02-P13 — Branch Protection Rules (Manager Task)
+
+**Setup:** GitHub repo Settings -> Branches -> Add branch protection rule
+Branch name pattern: main
+Enforcement status: MUST be set to "Active" (can silently be
+"Inactive" by default - easy to miss, rule does nothing until active)
+
+**Key protections enabled and why:**
+- Require a pull request before merging -> blocks ALL direct pushes
+  to main, even from repo owner/admins. Prevents M02-P04's entire
+  scenario (accidental direct commit to main) structurally.
+- Restrict/disallow force pushes -> blocks git push --force to main
+  through GitHub entirely. Prevents M02-P07's entire scenario
+  (teammate force-pushing over shared history) structurally.
+- Restrict deletions -> prevents main branch itself from being
+  accidentally deleted.
+- "Do not allow bypassing" -> ensures even repo admins can't quietly
+  skip these rules, or the protection is meaningless.
+
+**Solo-dev consideration:** left "Require approvals" at 0, since a
+required-approval count >=1 with no other collaborators would lock
+me out of merging my own PRs. Revisit if this becomes a team repo.
+
+**Proven live:** attempted a direct push to main after enabling ->
+GitHub rejected it: "remote rejected... push declined due to
+repository rule violations." Had to redo the fix through a proper
+branch + PR (reused the M02-P04 wrong-branch recovery pattern:
+branch the commit, reset main back, push branch, open PR, merge).
+
+**Core lesson - prevention vs recovery:**
+Everything through M02-P12 was REACTIVE - an incident happens, you
+need skill to recover from it correctly. Branch protection is
+PROACTIVE - it changes the system so the incident structurally
+cannot happen at all, regardless of anyone's skill or mistake.
+This is the mindset shift a "Manager Task" problem is really testing.
