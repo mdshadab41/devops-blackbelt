@@ -543,3 +543,35 @@ as "good" for this bisect.
 introduced a regression across a large history, especially useful in
 combination with automated tests (git bisect run <test-script> can
 even automate the good/bad testing itself).
+
+## M02-P16 — Timed Interview Challenge (3 problems, live)
+
+**Problem 1 — Discard an unpushed bad commit**
+Tool: git reset --hard HEAD~1
+Why safe: commit was never pushed, nobody else could have pulled it -
+zero risk of history disagreement (M02-P05/P07 rule).
+
+**Problem 2 — Remove a MIDDLE commit from already-shared history**
+Tool: git revert <commit-hash>
+Why revert (not reset): reset can only cut commits from the TIP
+backward - structurally cannot remove one commit from the middle
+while preserving commits that came after it. Revert has no such
+limitation since it doesn't move pointers, it calculates an undo and
+applies it as a new commit, regardless of position in history.
+Also required for shared history safety (same as Problem 1's inverse
+condition - this one WAS already pushed/pulled by a teammate).
+
+**Problem 3 — Rebase onto updated main, keep straight-line history**
+Tool: git rebase main
+Key skill: CHECKED FIRST whether a conflict would actually happen,
+instead of assuming - confirmed the two branches never touched the
+same file, so rebase completed with zero conflicts. Result: straight
+line history, no merge commit, exactly as required.
+
+**Overall lesson:** correct tool choice depends on answering two
+questions every time - (1) has this commit been shared with anyone
+else? and (2) do I need to target the tip, or somewhere in the
+middle of history? Reset = tip only, unshared only. Revert = anywhere
+in history, safe even if shared. Rebase = replays commits onto a new
+base, clean history, safe only if the branch being rebased is not
+yet shared/pushed.
