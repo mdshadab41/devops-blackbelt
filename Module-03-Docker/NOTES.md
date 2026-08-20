@@ -51,3 +51,23 @@ RUN pip install -r requirements.txt
 COPY app.py .
 CMD ["python3", "app.py"]
 ```
+
+
+
+## M03-P05 — Build, Tag, and Run Your Custom Image
+`docker build -t my-first-app .` — `-t my-first-app` names/tags the
+resulting image. The trailing `.` is the build context: tells Docker
+to look in the current folder for the Dockerfile and any files it
+needs to COPY in (requirements.txt, app.py).
+
+Rebuild with zero changes: every step showed CACHED, near-instant.
+Rebuild after only changing app.py: steps 1-4 (FROM, WORKDIR, COPY
+requirements.txt, RUN pip install) stayed CACHED, only step 5 (COPY
+app.py) re-ran. Proves Docker only rebuilds layers from the point of
+change onward, reusing everything before it. Confirms the caching
+theory from P03 with a live test.
+
+`docker run <image-name>` starts a container from the image.
+Container exits after the script finishes (same exit code convention
+as before). `docker ps -a` to see stopped containers, `docker
+container prune` to clean them up.
