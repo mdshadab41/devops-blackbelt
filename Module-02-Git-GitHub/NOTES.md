@@ -575,3 +575,23 @@ middle of history? Reset = tip only, unshared only. Revert = anywhere
 in history, safe even if shared. Rebase = replays commits onto a new
 base, clean history, safe only if the branch being rebased is not
 yet shared/pushed.
+
+## M02-MINI — Mini Project: Small Team Workflow Simulation
+
+Built a standalone project (~/pricing-tool, separate repo) simulating
+a realistic week of 2-person team development. Demonstrated in one
+connected story:
+- Proper feature branching (not direct commits to main)
+- A REAL merge conflict between two branches editing the same line,
+  resolved by combining both intents into a clean 2-parent merge commit
+- Recovery from an accidental direct commit to main (M02-P04 pattern:
+  git branch to save work, git reset --hard to clean main) - executed
+  independently without guidance
+- Clean final history readable as a story: setup -> fix -> conflict
+  (visible as fork+rejoin in the graph) -> feature added
+
+Full project summary written into pricing-tool's own README.md.
+This closes out Module 02 - all 16 problems, the revision sheet, and
+this mini project demonstrate genuine hands-on command of branching,
+merging, conflict resolution, history rewriting safety rules, GitHub
+PR workflows, branch protection, bisect, and incident recovery.
