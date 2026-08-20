@@ -27,3 +27,27 @@ below). Docker caches layers — if dependencies are installed early and
 app code is copied later, changing only the app code means only that
 layer (and anything after it) rebuilds; the cached dependency layer is
 reused. This makes CI/CD builds much faster.
+
+
+
+## M03-P04 — Writing a Dockerfile
+`FROM` sets the base image (e.g. `python:3.11-slim`) as the first layer.
+`WORKDIR /app` sets the working directory inside the image's own
+filesystem — separate from the host EC2's filesystem entirely; nothing
+from the host exists in the image unless explicitly COPYed or mounted.
+`COPY requirements.txt .` then `RUN pip install -r requirements.txt`
+happens BEFORE `COPY app.py .` — dependencies rarely change (cached
+layer, reused), app code changes often (only that layer rebuilds).
+`RUN` executes at BUILD time, bakes result into image layer. `CMD`
+does NOT run at build time — only recorded, executes later at
+`docker run` (container start time).
+
+Full Dockerfile:
+```
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+COPY app.py .
+CMD ["python3", "app.py"]
+```
