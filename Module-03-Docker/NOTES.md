@@ -71,3 +71,34 @@ theory from P03 with a live test.
 Container exits after the script finishes (same exit code convention
 as before). `docker ps -a` to see stopped containers, `docker
 container prune` to clean them up.
+
+
+
+## M03-P06 — Container Networking (Bridge, Port Mapping)
+Containers get their own private network namespace — own internal IP,
+completely separate from the host EC2's IP. Analogy: EC2 = apartment
+building with its own front door (EC2's own IP/localhost). Container =
+an apartment inside, with its own separate door (container's internal
+IP). A process inside the container (e.g. Flask) only listens on the
+container's own door — never the building's front door — so
+`curl http://localhost:5000` from the EC2 itself fails: nothing is
+listening at the EC2's own address on that port, even though Flask is
+running fine inside its container.
+
+`-p HOST_PORT:CONTAINER_PORT` (e.g. `-p 8080:5000`) acts like a
+doorman: forwards traffic hitting HOST_PORT on the EC2's real address
+into CONTAINER_PORT inside the container's private network.
+
+App must bind to `0.0.0.0` (all interfaces), not `127.0.0.1`
+(localhost-only) — otherwise even correct `-p` mapping won't reach it,
+since the app itself would refuse traffic arriving from "outside."
+
+Reaching a containerized app from outside requires 3 aligned layers:
+1. App binds to 0.0.0.0
+2. Docker `-p` port mapping exists
+3. AWS Security Group allows inbound traffic on the host port
+Missing any one = same symptom ("connection refused"), different root
+cause — useful checklist for real debugging.
+
+`docker run -d` = detached mode, runs container in background so it
+keeps serving requests instead of blocking the terminal.
