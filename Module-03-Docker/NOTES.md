@@ -102,3 +102,35 @@ cause — useful checklist for real debugging.
 
 `docker run -d` = detached mode, runs container in background so it
 keeps serving requests instead of blocking the terminal.
+
+
+
+## M03-P07 — Volumes & Bind Mounts (Persisting Data)
+A container's own filesystem is temporary — exists only as long as the
+container exists. Delete the container (`docker rm`), and anything
+written inside it (logs, uploads, database files) is gone permanently.
+Proved live: a log file written inside a container vanished completely
+("No such file or directory") after `docker rm` + new container from
+the same image.
+
+Bind mount (`-v HOST_PATH:CONTAINER_PATH`, e.g.
+`-v ~/docker-lab-02/logs:/app/logs`) fixes this — data physically lives
+on the EC2's own disk at a path YOU choose and can browse/edit directly.
+Proved live: same log file survived intact after `docker rm` + new
+container, because the file was never inside the container at all —
+just visible through it.
+
+Volume (`-v VOLUME_NAME:CONTAINER_PATH`, e.g. `-v mydata:/app/logs`,
+created with `docker volume create mydata`) — same durability, but
+Docker manages and hides the actual storage path (under
+`/var/lib/docker/volumes/`) instead of you specifying one. You refer
+to it only by name. Both bind mounts and volumes store data on the
+EC2's real disk — the difference is WHO controls the exact path, not
+"container vs EC2."
+
+Bind mounts: good for development — easy to inspect/edit directly.
+Volumes: preferred in production — harder for a human to accidentally
+corrupt, Docker fully owns the lifecycle. Any stateful production
+service (database, persistent logs, uploads) MUST use one of these, or
+every container replacement (crash, redeploy, scaling, update) wipes
+its data with no warning.
