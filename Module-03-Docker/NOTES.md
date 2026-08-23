@@ -167,3 +167,45 @@ confirms identical image, byte-for-byte. This is what allows a
 completely different machine (teammate's laptop, CI runner, Kubernetes
 node) to run the same image without access to the original build files.
 
+
+
+## M03-P09 — Multi-Stage Builds (Shrinking a Bloated Image)
+A container's final image carries around all build-time baggage
+forever (pip itself, build tools, cached files) even though it's dead
+weight after the build finishes — most of it is only needed DURING
+build, not at runtime.
+
+Multi-stage builds use 2+ `FROM` lines in one Dockerfile. Stage 1
+("builder", named via `FROM ... AS builder`) does the heavy build work
+(pip install, compiling). Stage 2 (final) starts fresh and only
+`COPY --from=builder /path /path` the finished results — none of Stage
+1's build tools or cache carry over, since Stage 1 is discarded
+entirely once the build finishes.
+
+`pip install --user` puts all installed packages in one predictable
+folder (`/root/.local`) instead of scattering them across system
+folders — makes `COPY --from=builder /root/.local /root/.local` clean
+and complete. Also needed: `ENV PATH=/root/.local/bin:$PATH` in Stage
+2, since Python/shell only search a specific PATH list, not the whole
+filesystem — copying files in doesn't mean anything "knows" to look
+there.
+
+KEY INSIGHT: size reduction depends entirely on STAGE 2's base image,
+since Stage 1 is discarded regardless of size. Tested live:
+- Original single-stage (`python:3.11-slim`): 213MB
+- Multi-stage, Stage 2 still `slim`: 194MB (~9% reduction — only saved
+  a duplicate pip install, base OS bulk unchanged)
+- Multi-stage, Stage 2 switched to `python:3.11-alpine`: 91.4MB (~57%
+  reduction — Alpine is a genuinely minimal Linux distro)
+
+RISK: Alpine uses `musl` libc instead of `glibc` (used by
+slim/Debian-based images). Pre-compiled binary Python packages built
+against glibc may fail on musl. Tested live: flask worked fine on
+Alpine in this case, but this isn't guaranteed for every package —
+production teams should explicitly test compatibility before
+committing to Alpine, especially for packages with compiled extensions
+(numpy, psycopg2, cryptography, etc.).
+
+Resources: pythonspeed.com "Multi-stage builds #2: Python specifics",
+YouTube "Docker Multistage builds explained in 8 minutes"
+(https://www.youtube.com/watch?v=V0kTEk7YA70)
