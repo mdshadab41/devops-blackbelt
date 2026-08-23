@@ -134,3 +134,36 @@ corrupt, Docker fully owns the lifecycle. Any stateful production
 service (database, persistent logs, uploads) MUST use one of these, or
 every container replacement (crash, redeploy, scaling, update) wipes
 its data with no warning.
+
+
+
+## M03-P08 — Push & Pull to a Registry (Docker Hub + AWS ECR)
+Docker Hub is public by default (anyone can pull `python:3.11-slim`,
+no login needed). AWS ECR is private by default — real company images
+often contain proprietary code/logic, so authentication is required
+before push or pull.
+
+`aws ecr get-login-password --region ap-south-1 | docker login
+--username AWS --password-stdin <account>.dkr.ecr.<region>.amazonaws.com`
+— generates a temporary AWS token and pipes it into `docker login`,
+avoiding manual password handling.
+
+`docker tag flask-demo:latest <ecr-uri>/flask-demo:latest` — does NOT
+create a new image or duplicate data. Just adds a second name/label
+pointing at the same existing image (confirmed via identical IMAGE ID).
+The image must already exist locally before tagging — tag never builds
+anything.
+
+`docker push <ecr-uri>/flask-demo:latest` — reads the registry address
+embedded in the tag name and uploads the real layer data there. First
+push to a brand-new ECR repo uploads ALL layers (including base image
+layers) since caching only skips layers the DESTINATION already has —
+a fresh repo has nothing to skip. A later push with only a small code
+change would skip the unchanged base layers.
+
+Full round trip proved: build locally → tag for ECR → authenticate →
+push → delete local copy → pull back down from ECR → same digest
+confirms identical image, byte-for-byte. This is what allows a
+completely different machine (teammate's laptop, CI runner, Kubernetes
+node) to run the same image without access to the original build files.
+
