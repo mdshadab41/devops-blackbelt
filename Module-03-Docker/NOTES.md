@@ -209,3 +209,63 @@ committing to Alpine, especially for packages with compiled extensions
 Resources: pythonspeed.com "Multi-stage builds #2: Python specifics",
 YouTube "Docker Multistage builds explained in 8 minutes"
 (https://www.youtube.com/watch?v=V0kTEk7YA70)
+
+
+
+## M03-P10 — Docker Compose (Multi-Container App)
+Real services should run in SEPARATE containers, not crammed into one
+("one container, one responsibility"). This allows independent
+lifecycle management — upgrading, restarting, or scaling one service
+(e.g. Redis) never risks disturbing another (e.g. Flask), since
+they're genuinely isolated units, not bundled together.
+
+Docker Compose (`docker-compose.yml`) describes multiple services
+together in one YAML file. `build: .` for services with our own
+Dockerfile (e.g. Flask/web); `image: redis:alpine` for ready-made
+public images we just pull and run as-is, no build needed.
+`depends_on: [redis]` controls START ORDER only (redis starts before
+web) — does NOT guarantee Redis is fully ready to accept connections,
+just that its container has started.
+
+YAML indentation is meaningful — services must be siblings under
+`services:`, same indentation level, or one gets nested inside another
+by mistake (caught and fixed this live).
+
+Networking: Compose automatically creates a shared private network
+with built-in internal DNS for all services in the file. Flask reaches
+Redis via `host="redis"` (the service name from docker-compose.yml) —
+no hardcoded IP ever needed, Docker resolves the name to the actual
+(possibly-changing) internal IP automatically.
+
+`docker compose up -d --build` — builds + starts everything, `--build`
+forces a rebuild check even if an image already exists (good habit
+during active development). `docker compose down` — stops AND removes
+all containers plus the network Compose created, in one command.
+
+Redis has no `-p` host port mapping — only Flask needs one, since only
+Flask must be reachable from OUTSIDE the Docker network (browser/curl).
+Redis is only ever accessed internally by Flask — not exposing it to
+the host is also a security best practice (can't be reached externally
+even by accident).
+
+Proved live: `docker ps` after `compose up` showed TWO separate
+containers (docker-lab-03-web-1, docker-lab-03-redis-1) — Compose
+orchestrates real, individual containers, doesn't merge them into one.
+Visit counter (`cache.incr("visits")`) incremented correctly across
+requests (1, 2, 3), confirming Flask successfully read/wrote to Redis
+across the container boundary.
+
+Teach-back Q&A (P10):
+Q: Why separate containers instead of one for Flask + Redis?
+A: Upgrading Redis never requires touching or rebuilding Flask's
+container, and vice versa — each stays independently changeable.
+
+Q: How does Flask reach Redis without a hardcoded IP?
+A: Docker Compose's automatic internal DNS resolves the service name
+("redis") to its actual internal IP — no manual tracking needed.
+
+Q: Why doesn't Redis need a -p port mapping while Flask does?
+A: Redis is only ever accessed internally by Flask, never from outside
+the Docker network. Flask must be reachable by an outside browser/curl,
+so it needs the host port mapping; Redis deliberately doesn't, which is
+also a security plus — nothing external can reach it even by accident.
