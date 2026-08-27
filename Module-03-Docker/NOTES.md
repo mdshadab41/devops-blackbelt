@@ -269,3 +269,59 @@ A: Redis is only ever accessed internally by Flask, never from outside
 the Docker network. Flask must be reachable by an outside browser/curl,
 so it needs the host port mapping; Redis deliberately doesn't, which is
 also a security plus — nothing external can reach it even by accident.
+
+
+
+## M03-P11 — Debugging Toolkit: logs, exec, inspect, stats
+`docker logs <container>` — shows whatever the APPLICATION printed
+(stdout/stderr) since the container started. Passive, historical
+record. New requests appear as new lines appended to existing output.
+
+`docker exec -it <container> bash` — opens an interactive shell INSIDE
+an already-running container (`-i` = interactive, keep input open;
+`-t` = allocate a pseudo-TTY, makes it feel like a real terminal).
+Minimal base images (slim) strip out non-essential tools to stay
+small — `ps` was missing entirely inside the container, a real
+friction point when debugging minimal images interactively.
+
+`docker inspect <container>` — full JSON configuration dump: IP,
+volumes, env vars, restart policy, etc. — Docker's own metadata, not
+app output. Use `--format '{{...}}'` (Go template syntax) to filter to
+one specific field. Compose-created containers store their internal
+IP nested under `.NetworkSettings.Networks.<network-name>.IPAddress`
+(NOT the flat `.NetworkSettings.IPAddress`, which only applies to the
+plain default bridge network). Network names with hyphens break Go
+template parsing directly — need the `index` function:
+`{{(index .NetworkSettings.Networks "docker-lab-03_default").IPAddress}}`
+
+`docker stats` — the only one of the four that's LIVE and continuously
+updating: real-time CPU%, memory%, network I/O, similar to `top` but
+scoped to containers. The right tool specifically for "app seems slow"
+complaints — logs and inspect don't reveal resource pressure at all.
+
+Debugging trail worth remembering: wrong guess on IP path → real
+parsing error → checked actual JSON structure via grep → found nested
+key → hit hyphen syntax issue → used `index` workaround. This IS what
+real debugging looks like — guess, fail, investigate structure, fix.
+
+Teach-back Q&A (P11):
+Q: What's the core difference between docker logs and docker exec?
+A: docker logs is passive — shows what the app already printed
+(stdout/stderr) since the container started. docker exec is active —
+lets you actually reach in and run a command or open a shell live
+inside an already-running container.
+
+Q: Why did docker inspect --format '{{.NetworkSettings.IPAddress}}' fail?
+A: That flat path only works for containers on the plain default
+bridge network. Docker Compose creates its own custom-named network,
+so the IP lives nested one level deeper under
+.NetworkSettings.Networks.<network-name>.IPAddress instead — and the
+hyphen in the network name broke direct template parsing, requiring
+the index function as a workaround.
+
+Q: Why is docker stats specifically the right tool for a "the app
+seems slow" complaint?
+A: It's the only one of the four that shows LIVE, continuously-updating
+resource usage (CPU%, memory%, network I/O). Neither docker logs
+(app output) nor docker inspect (static config) reveal resource
+pressure at all — only stats measures it in real time.
