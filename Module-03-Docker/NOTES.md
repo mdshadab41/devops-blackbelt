@@ -325,3 +325,55 @@ A: It's the only one of the four that shows LIVE, continuously-updating
 resource usage (CPU%, memory%, network I/O). Neither docker logs
 (app output) nor docker inspect (static config) reveal resource
 pressure at all — only stats measures it in real time.
+
+
+
+## M03-P12 — Debug the Dockerfile (Intentionally Broken)
+Found 3 genuine functional/best-practice issues plus 1 code smell in
+a broken Dockerfile:
+
+1. `RUN pip install requirements.txt` — missing `-r` flag. pip treats
+   "requirements.txt" as a package name to search PyPI for instead of
+   a file to read. Caused an actual BUILD failure — easy to catch,
+   Docker's own error message even suggests the fix.
+
+2. `CMD python3 app.py` (shell form) instead of exec form
+   (`CMD ["python3", "app.py"]`). Docker's own linter flags this
+   (JSONArgsRecommended warning). Shell form works but doesn't handle
+   OS signals (Ctrl+C, docker stop) cleanly — exec form preferred.
+
+3. `WORKDIR /app` placed AFTER the `COPY` commands instead of before.
+   Build SUCCEEDS (Docker copies files to `/` since WORKDIR hasn't run
+   yet, then creates `/app` afterward with nothing in it) — but
+   container FAILS AT RUNTIME with "No such file or directory" since
+   CMD runs from /app, where the files were never actually placed.
+   PROVEN LIVE by isolating this one bug in its own test Dockerfile.
+
+4. `EXPOSE 5000` with no actual server running in the app — not a
+   functional bug, just misleading/dead config worth flagging in a
+   real code review.
+
+KEY LESSON: a successful `docker build` does NOT guarantee the
+container will actually work — some bugs (like #3) only surface at
+RUNTIME. Always test with `docker run`, never assume a clean build
+means a working container.
+
+Cleanup note: `docker rmi` fails with "conflict: unable to delete...
+container X is using its referenced image" if any container (even
+stopped) still references that image — must `docker container prune`
+(or remove specific containers) BEFORE removing the image.
+
+Teach-back Q&A (P12):
+Q: Why did the WORKDIR-after-COPY bug pass the build but fail at
+runtime?
+A: At build time, Docker copies files to wherever "." currently
+resolves to (root, since WORKDIR hasn't run yet) — this succeeds with
+no error. At runtime, CMD executes from whatever WORKDIR was last set
+to (/app), where the files don't actually exist — only THEN does it
+fail, since the build process never checks whether CMD's target files
+will actually be reachable later.
+
+Q: What does this teach about validating a Dockerfile in general?
+A: A successful docker build only proves the build STEPS ran without
+error — it says nothing about whether the container will actually run
+correctly. Always test with docker run too, not just docker build.
