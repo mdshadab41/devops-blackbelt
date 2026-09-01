@@ -377,3 +377,45 @@ Q: What does this teach about validating a Dockerfile in general?
 A: A successful docker build only proves the build STEPS ran without
 error — it says nothing about whether the container will actually run
 correctly. Always test with docker run too, not just docker build.
+
+
+
+## M03-P13 — Incident: Container Keeps Restarting (Crash Loop)
+Containers do NOT restart automatically by default — a container that
+crashes just stays stopped. A crash loop only happens when a RESTART
+POLICY is explicitly set (`--restart on-failure`, `--restart always`,
+etc.), telling Docker to bring the container back up after it exits.
+`on-failure` only restarts on a non-zero exit code; `always` restarts
+regardless of how it exited.
+
+Restart policies are a double-edged sword: useful for recovering from
+temporary blips, but if the underlying cause is PERSISTENT (missing
+config, bad code), the policy retries forever without ever fixing
+anything — an infinite crash loop.
+
+Debugged live: `docker ps -a` showed "Restarting (1) 1 second ago" —
+the (1) is the exit code. `docker logs <container>` revealed the real
+root cause immediately: `KeyError: 'API_KEY'` — the app required an
+environment variable that was never set. `-e KEY=value` on `docker
+run` sets an environment variable (NOT `-env`, which doesn't exist —
+Docker uses single-dash-single-letter short flags like -e, -p, -v, or
+double-dash-full-word long flags like --env, --publish, --volume).
+
+Fixed by supplying `-e API_KEY=<value>` — container then exited
+cleanly (0), no more restart loop, since on-failure only retries on
+actual errors.
+
+RCA:
+- Problem: payment-service stuck in crash loop, restarting every few
+  seconds
+- Impact: Service unavailable
+- Root Cause: Required env var API_KEY was never set; app crashed
+  immediately at startup with KeyError; restart policy kept retrying
+  the same failing startup indefinitely
+- Resolution: Supplied missing variable via -e flag
+- Preventive Action: Add clearer fail-fast error messaging naming the
+  exact missing variable (not just a raw traceback); document all
+  required env vars (README/.env.example)
+- Lessons Learned: A restart policy is NOT a fix for a persistent
+  problem — it retries forever without resolving the cause. docker
+  logs is the fastest path to root cause in any crash loop.
