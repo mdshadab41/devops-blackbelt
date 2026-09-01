@@ -419,3 +419,43 @@ RCA:
 - Lessons Learned: A restart policy is NOT a fix for a persistent
   problem — it retries forever without resolving the cause. docker
   logs is the fastest path to root cause in any crash loop.
+
+
+
+## M03-P14 — Incident: Image Won't Build / Dependency Hell
+"Dependency hell" = multiple packages having conflicting version
+requirements with each other (not just a single package failing).
+
+Tested live: pinned `flask==2.0.0` + `werkzeug==3.0.0` in
+requirements.txt. Surprising result — `docker build` SUCCEEDED with no
+error, only a generic "don't run pip as root" warning. The actual
+conflict only surfaced at RUNTIME: `docker run` failed with
+`ImportError: cannot import name 'url_quote' from 'werkzeug.urls'` —
+Flask 2.0.0's internal code expected a function that werkzeug 3.0.0 no
+longer provides.
+
+KEY LESSON (same as P12): pip install / docker build succeeding does
+NOT guarantee installed packages are functionally compatible. pip
+mainly checks declared version constraints — those constraints aren't
+always strict enough to catch every real incompatibility, so a broken
+pairing can install cleanly and only fail when the code actually runs.
+
+Fix: removed manual version pins entirely (just `flask`, no separate
+werkzeug line) — let pip resolve a genuinely compatible werkzeug
+version automatically based on Flask's own declared requirements,
+rather than manually forcing two versions that don't work together.
+
+RCA:
+- Problem: Image built successfully, but container crashed immediately
+  on docker run with an ImportError
+- Impact: Service completely unable to start
+- Root Cause: Pinned flask==2.0.0 with werkzeug==3.0.0 — incompatible
+  internal APIs; pip installed both without complaint, failure only
+  appeared when the code actually ran
+- Resolution: Removed manual version pins, let pip resolve compatible
+  versions together automatically
+- Preventive Action: Avoid pinning sub-dependencies (like werkzeug)
+  unless there's a specific documented reason; when pinning IS
+  necessary, test the actual running app, not just a successful build
+- Lessons Learned: Build success ≠ runtime success — reinforced twice
+  now (P12, P14). Always test with docker run, not just docker build.
