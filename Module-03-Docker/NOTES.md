@@ -459,3 +459,75 @@ RCA:
   necessary, test the actual running app, not just a successful build
 - Lessons Learned: Build success ≠ runtime success — reinforced twice
   now (P12, P14). Always test with docker run, not just docker build.
+
+
+
+## M03-P15 — Incident: ImagePullBackOff (Bad Tag / ECR Auth Expiry)
+Two distinct causes tested live, distinguishable by error message:
+
+1. Wrong/nonexistent image name: "pull access denied for X, repository
+   does not exist or may require 'docker login'" — deliberately
+   AMBIGUOUS (could be a genuine typo OR a private repo you're not
+   authenticated to) — security choice, won't confirm private repos
+   exist to unauthenticated users.
+
+2. Expired/missing ECR auth on a KNOWN repo: "authorization failed: no
+   basic auth credentials" — more specific, clearly points to an auth
+   problem. ECR tokens expire after 12 hours. Fixed by re-running
+   `aws ecr get-login-password | docker login` from P08.
+
+Preventive action: never rely on a manually-run login session for
+automated/production pulls — bake fresh ECR authentication into every
+CI/CD pipeline run so a new token is fetched right before it's needed.
+
+## M03-P16 — Incident: Disk Full (Dangling Layers)
+Docker never auto-cleans anything — every build, every stopped
+container, every replaced layer just accumulates on disk forever
+unless manually removed.
+
+Diagnosed with `df -h` (OS-level, 77% used) and `docker system df`
+(Docker-level breakdown: Images 718.6MB/531.9MB reclaimable, Build
+Cache 814.8MB/75 entries). "Dangling" image = untagged, orphaned image
+left behind when a rebuild reassigns a tag to a newer image
+(`docker images -f dangling=true` to find them — none found here,
+since the reclaimable space was from legitimately-tagged-but-unused
+images instead).
+
+Cleaned up deliberately (reviewed `docker images` first, decided
+keep/remove per image rather than blindly pruning everything) with
+`docker rmi <specific images>`, then `docker builder prune -a` cleared
+the entire 814.8MB build cache. Disk usage dropped 77% → 65%.
+
+Preventive action: run `docker system df` / cleanup routinely (weekly,
+or after CI/CD runs), not reactively once disk is already critical.
+
+## M03-P17 — Image Security Scan with Trivy
+CVE = Common Vulnerabilities and Exposures, a publicly catalogued
+security flaw. Vulnerabilities can exist in the base OS and
+third-party libraries, not just your own code — scanning the whole
+IMAGE matters, not just your code.
+
+Installed Trivy via apt repo (used `$(lsb_release -sc)` to dynamically
+detect codename "resolute" rather than hardcoding a wrong one).
+`trivy image <name>` scans everything; `--severity CRITICAL` filters
+to just the highest priority findings. 229 total findings on
+python:3.11-slim-based flask-demo is NORMAL for a full OS base image —
+triage by severity, don't try to fix all of them.
+
+Found 3 CRITICAL CVEs, all in perl-base (Perl bundled into Debian base,
+never used by the Flask app). "Fixed Version" column was EMPTY for all
+3 — no patch available yet. Attempted `apt-get remove -y perl-base` —
+FAILED, apt blocked it: perl-base is marked "essential" in Debian,
+warned removal could break other system functionality.
+
+REAL FIX: switched final stage to `python:3.11-alpine` (already built
+in P09 for size) — re-scan showed 0 vulnerabilities total. The same
+Alpine switch that gave a 57% size reduction in P09 ALSO eliminated
+100% of this image's CVEs.
+
+KEY LESSON: not every CVE has a safe, direct fix. Forcing removal of
+an "essential" package trades a known, low-risk CVE for an unknown,
+potentially worse breakage — the better fix is often architectural
+(smaller/different base image) rather than surgical (removing one
+package). Minimal base images are simultaneously a performance AND
+security win.
