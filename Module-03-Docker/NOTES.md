@@ -695,3 +695,54 @@ what") before technical details (the "how") — respects the reader's
 time while still providing depth for anyone who wants it. Be honest
 about testing scope (local vs real CI) rather than overstating results
 not yet measured in production.
+
+
+
+## M03-P22 — Manager Task: Container Hardening (Non-Root, Limits, Health Check)
+
+**Summary**: Hardened the Flask service container against all three
+requirements: runs as a non-root user, has enforced memory/CPU limits
+to prevent resource exhaustion on shared infrastructure, and exposes a
+real health check so orchestration tools can detect if it's actually
+working — not just running.
+
+**1. Non-Root User**: `useradd --create-home appuser && chown -R
+appuser:appuser /app` then `USER appuser`. Verified live: `docker exec
+<container> whoami` → `appuser`, not `root`. Limits blast radius if
+the app is compromised.
+
+**2. Resource Limits**: `docker run --memory=256m --cpus=0.5`. No
+limit = cgroups don't restrict the container at all — a leak/runaway
+process could consume the ENTIRE host's memory, starving every other
+container sharing the machine ("noisy neighbor" problem). Verified
+live: `docker stats` showed enforced `256MiB` limit instead of the
+host's full available memory (908.7MiB seen in earlier problems).
+
+**3. Health Check**: `HEALTHCHECK --interval=30s --timeout=3s CMD
+curl -f http://localhost:5000/ || exit 1`. "Up" in docker ps only means
+the process hasn't crashed — NOT that the app is actually working
+(could be deadlocked/broken while still "running"). `curl -f`
+specifically needed — plain curl returns exit code 0 even on a 500
+error (successfully received A response, just an error one);
+HEALTHCHECK relies entirely on exit code to judge healthy/unhealthy.
+Verified live: `docker ps` showed "(healthy)" status appended, visibly
+different from a plain "Up" container with no HEALTHCHECK defined.
+
+**Applied proactively**: cleaned apt cache in the same RUN step as
+installing curl (`&& rm -rf /var/lib/apt/lists/*`) — avoided the exact
+FATAL Dockle finding from P18 before it became a repeat issue.
+
+Full hardened Dockerfile:
+```
+FROM python:3.11-slim
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p logs
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+COPY app.py .
+RUN useradd --create-home appuser && chown -R appuser:appuser /app
+USER appuser
+HEALTHCHECK --interval=30s --timeout=3s CMD curl -f http://localhost:5000/ || exit 1
+CMD ["python3", "app.py"]
+```
