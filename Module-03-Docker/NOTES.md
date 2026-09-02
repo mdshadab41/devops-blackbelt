@@ -531,3 +531,78 @@ potentially worse breakage — the better fix is often architectural
 (smaller/different base image) rather than surgical (removing one
 package). Minimal base images are simultaneously a performance AND
 security win.
+
+
+
+## M03-P18 — Image Best-Practices Lint with Dockle
+Dockle checks image CONSTRUCTION habits and configuration choices —
+different from Trivy, which scans installed PACKAGES against known
+CVEs. Dockle's severity labels (FATAL/WARN/INFO) don't map to security
+danger level the way Trivy's do — FATAL here means "unambiguous waste,
+no legitimate reason not to fix" (e.g. leftover apt cache), while WARN
+can mean "strong recommendation, but legitimate exceptions exist"
+(e.g. running as root — some tools genuinely need it).
+
+Every container built this whole module ran as ROOT by default — never
+explicitly set otherwise. Real risk: if an attacker exploits any bug
+in the running app, root inside the container gives them a much bigger
+blast radius than a restricted user would.
+
+Fix: `RUN useradd --create-home appuser && chown -R appuser:appuser
+/app` then `USER appuser`. REAL MISTAKE MADE: added the useradd/chown
+line but forgot the separate `USER appuser` instruction — creating a
+user and switching to it are two different steps. Verified the "fix"
+was incomplete by re-running Dockle, which still showed the same
+warning — caught it by re-checking rather than assuming success.
+
+Also flagged: `:latest` tag is risky (ambiguous, moveable — direct
+lead-in to the Cosign lesson in P19). FATAL apt-cache warning applies
+to python:3.11-slim's own internal build steps, not something fixable
+from our own Dockerfile.
+
+UNPLANNED LIVE INCIDENT during this problem: disk hit 100% full while
+installing Dockle (real "No space left on device" error). Diagnosed
+with df -h / docker system df — found TWO separate contributing
+causes: Docker's build cache/images (530MB) AND Trivy's own cache
+directory (~/.cache/trivy, 1.3GB) had both grown since P16. Real
+lesson: disk-full incidents often have MULTIPLE causes, not just one.
+Fixed with `docker system prune -a --volumes -f` (537MB reclaimed) +
+`rm -rf ~/.cache/trivy` — this aggressive prune also removed the ECR
+flask-demo image, which was safely re-pulled from ECR afterward,
+proving the real value of pushing to a registry (P08).
+
+## M03-P19 — Sign an Image with Cosign (Supply Chain Security)
+Docker has ZERO built-in concept of authenticity — `docker pull` just
+trusts whatever bytes are at a registry address, with no verification
+of who actually built/pushed it. This is the real gap Cosign closes,
+using public/private key cryptography (same principle as SSH keys):
+sign with the PRIVATE key (secret, only the signer has it), verify
+with the PUBLIC key (shareable with anyone — can only check
+signatures, never forge new ones).
+
+`cosign generate-key-pair` creates cosign.key (permissions 600,
+owner-only) and cosign.pub (644, world-readable) — Cosign sets these
+automatically, matching real security practice. Private key is
+password-protected as defense in depth (even a stolen key file still
+needs the password to be usable).
+
+IMPORTANT: Cosign warns against signing by TAG (`:latest`) — tags are
+movable pointers; someone could push different content to the same tag
+AFTER signing, and the old signature wouldn't protect against that new
+content. Signing by DIGEST (`sha256:...`) closes this gap — a digest
+is a cryptographic hash of the exact content itself, can never be
+reassigned to different content. Got digest via `docker inspect
+--format='{{index .RepoDigests 0}}' <image>`, then signed/verified
+using the `image@sha256:...` reference instead of `:latest`.
+
+`cosign sign --key cosign.key <image@digest>` pushes the signature to
+the registry alongside the image. `cosign verify --key cosign.pub
+<image@digest>` checks it — no password needed (public key operation).
+
+PROVED LIVE: verifying with a completely unrelated "fake" key pair
+failed clearly ("no matching attestations: transparency log
+certificate does not match") — confirms only the TRUE matching public
+key can successfully verify a signature; a malicious actor can't forge
+a valid verification without the real private key. This is the actual
+security guarantee a Kubernetes admission controller or CI/CD gate
+would rely on before allowing a deployment.
