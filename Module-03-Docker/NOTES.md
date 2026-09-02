@@ -606,3 +606,49 @@ key can successfully verify a signature; a malicious actor can't forge
 a valid verification without the real private key. This is the actual
 security guarantee a Kubernetes admission controller or CI/CD gate
 would rely on before allowing a deployment.
+
+
+
+## M03-P20 — Standalone Interview Questions Set
+
+Q1: Difference between COPY and ADD?
+A: COPY does a simple, predictable file/folder copy. ADD does the same
+plus extra "magic" — auto-extracts local tar/gzip archives, can fetch
+from a URL. Best practice: default to COPY, since ADD's extra
+behavior can cause unexpected/surprising results — explicit is safer
+than implicit.
+
+Q2: Difference between CMD and ENTRYPOINT?
+A: CMD provides DEFAULT arguments that get completely REPLACED if
+anything is passed after the image name in `docker run`. ENTRYPOINT
+sets a FIXED command that always runs — anything passed at `docker
+run` gets APPENDED as arguments to it instead. Common pattern: combine
+both — `ENTRYPOINT ["python3"]` + `CMD ["app.py"]` — guarantees the
+container always runs Python (can't be accidentally overridden to run
+something unrelated) while still letting the specific script be
+swapped at runtime without rebuilding.
+
+Q3: docker system prune vs docker container/image prune?
+A: system prune is a broad, catch-all cleanup across MULTIPLE
+categories at once (containers, dangling images, unused networks,
+build cache) — container/image prune are scoped to just their one
+category. IMPORTANT: system prune (no flags) only removes DANGLING
+(untagged) images by default, not all unused ones — need -a for that,
+same distinction as image prune.
+
+Q4: What's wrong with hardcoding ENV DB_PASSWORD=secret in a
+Dockerfile?
+A: ENV values become part of the image's metadata, baked permanently
+into a layer. Anyone who can `docker pull` the image can extract the
+password via `docker inspect` or `docker history`, even without
+running it — completely defeats the purpose of it being secret. Real
+fix: pass secrets at RUNTIME via `-e` on `docker run` (or a proper
+secrets manager), never bake into the Dockerfile itself.
+
+Q5: Image vs container, and why does this matter for fast startup?
+A: Image = read-only blueprint. Container = running instance, adds a
+thin writable layer on top. One image can spawn multiple containers.
+Starting a container just means adding that lightweight writable layer
+to an already-built, ready-to-use image and applying namespace/cgroup
+isolation — no OS boot process at all, which is why containers start
+in milliseconds vs a VM's 30-60 second boot (ties back to P01).
