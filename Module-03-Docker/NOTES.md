@@ -652,3 +652,46 @@ Starting a container just means adding that lightweight writable layer
 to an already-built, ready-to-use image and applying namespace/cgroup
 isolation — no OS boot process at all, which is why containers start
 in milliseconds vs a VM's 30-60 second boot (ties back to P01).
+
+
+
+## M03-P21 — Manager Task: Reduce Image Size & Build Time for CI
+
+**Summary**: Reduced our Flask service's image size by 57% (213MB →
+91.4MB) and set up the Dockerfile so CI builds skip redundant work on
+code-only commits, using multi-stage builds, a minimal Alpine base,
+and proper dependency-layer caching.
+
+**Size Impact**:
+- Original single-stage image (python:3.11-slim): 213MB
+- Multi-stage build, still on slim base: 194MB (~9% reduction — mainly
+  avoided a duplicate pip install)
+- Multi-stage build, switched final stage to python:3.11-alpine:
+  91.4MB (~57% reduction from baseline)
+- Biggest lever: the BASE IMAGE choice, not the multi-stage pattern
+  alone — switching to Alpine specifically drove the majority of the
+  savings (103MB of the ~122MB total drop)
+
+**Build Time Impact**: With dependencies copied/installed before app
+code in the Dockerfile, a code-only rebuild dropped from 10.6s (full
+build) to ~0.1s locally, since Docker reuses cached layers for
+anything above the change. Most CI commits touch app code, not
+dependencies — this ordering means most builds would skip the
+expensive pip install step entirely.
+
+**Trade-off flagged**: Alpine uses musl libc instead of glibc (used by
+slim/Debian-based images) — some Python packages with pre-compiled
+binary extensions can behave differently or fail on Alpine. Tested our
+specific dependencies (flask) and confirmed compatibility; should be
+re-verified for any new dependencies added later.
+
+**Bonus finding**: The same Alpine switch also eliminated all 3
+CRITICAL CVEs found by Trivy (perl-base, bundled in Debian-based slim
+but never used by our app) — this optimization improved both
+performance and security simultaneously.
+
+KEY LESSON: manager-facing reports should lead with IMPACT (the "so
+what") before technical details (the "how") — respects the reader's
+time while still providing depth for anyone who wants it. Be honest
+about testing scope (local vs real CI) rather than overstating results
+not yet measured in production.
