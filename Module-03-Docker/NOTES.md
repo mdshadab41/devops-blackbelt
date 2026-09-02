@@ -746,3 +746,60 @@ USER appuser
 HEALTHCHECK --interval=30s --timeout=3s CMD curl -f http://localhost:5000/ || exit 1
 CMD ["python3", "app.py"]
 ```
+
+
+
+## M03-P23 — Architecture: Docker vs Podman vs containerd
+
+containerd is NOT a competitor to Docker — it's a lower-level
+container runtime that Docker itself is built ON TOP OF. containerd
+handles the actual low-level work (pulling images, creating/running
+containers); Docker adds the full developer toolset on top (CLI,
+build tooling, networking, Compose). This explains the
+"containerd error: permission denied" seen in P17's Trivy scan attempt
+— containerd runs underneath Docker on the EC2, even though it's
+never interacted with directly.
+
+Podman's key architectural difference: DAEMONLESS. Docker requires an
+always-running background daemon (`dockerd`, traditionally root-owned
+— verified live with systemctl status docker back in P02). Podman's
+CLI directly manages containers itself, no separate daemon process at
+all. Security benefit: rootless-first design from the start — no
+root-owned background process to escalate through if compromised
+(Docker added rootless mode later, wasn't the original design).
+
+KEY REAL-WORLD FACT: modern Kubernetes clusters run containerd
+DIRECTLY as their container runtime, without Docker in the middle —
+Kubernetes deprecated direct Docker support in favor of runtimes
+implementing the standard CRI interface. Directly relevant for
+Module 06/15 (Kubernetes/EKS) — will be working with clusters where
+containerd is the runtime under the hood.
+
+| | Docker | Podman | containerd |
+|---|---|---|---|
+| What it is | Full toolset (CLI, build, networking, Compose) | Drop-in Docker CLI alternative | Low-level container runtime only |
+| Architecture | Client + always-running root daemon | Daemonless — CLI directly manages containers | No CLI/UX layer — used BY other tools |
+| Root requirement | Traditionally root daemon (rootless added later) | Rootless-first from the start | N/A — runs as whatever the calling process requires |
+| Relationship | Uses containerd internally | Independent, doesn't use Docker/containerd daemon | The engine Docker is built on top of |
+| Choose it for | Local dev, teams familiar with Docker, Docker-specific CI/CD | Security-sensitive rootless environments | Production Kubernetes — the current standard runtime |
+
+Interview takeaway: these aren't true "competitors" — containerd is
+foundational, Docker is a full toolset built on a runtime, Podman is
+an alternative toolset skipping the daemon. Real trend: local dev
+often uses Docker for convenience; production K8s infra runs on
+containerd directly.
+
+
+FULL CHAIN under the hood (docker run hello-world):
+1. docker CLI (client) — messenger, sends request to dockerd
+2. dockerd (daemon) — handles higher-level work (image pull checks,
+   -p/-v flags, networking, logging) — does NOT touch the kernel itself
+3. containerd — dockerd hands off to containerd, which manages image
+   storage and full container lifecycle — also does NOT touch the
+   kernel directly itself
+4. runc — containerd hands off to runc, a low-level, one-shot tool
+   that ACTUALLY calls into the Linux kernel to create namespaces/
+   cgroups (P01) and start the container process, then exits
+
+Chain: docker (client) → dockerd (daemon) → containerd (runtime
+manager) → runc (low-level kernel executor)
