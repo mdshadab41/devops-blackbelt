@@ -850,3 +850,39 @@ consistent once truly exceeded, not sporadic.
 KEY TAKEAWAY: this was the most valuable RCA of the module precisely
 BECAUSE the initial hypothesis was wrong — real debugging means
 following evidence even when it contradicts your first assumption.
+
+
+
+## M03-P25 — Timed Interview Challenge: 3 Rapid Docker Scenarios
+
+**Scenario 1**: `-p 5000:8080` with app listening on 8080, user tries
+accessing at :8080, gets connection refused. DIAGNOSIS: port mapping
+is HOST:CONTAINER — 8080 was never exposed to host, only 5000 was.
+Fix: access via :5000, or remap to -p 8080:8080. (Answered correctly,
+fast.)
+
+**Scenario 2**: CI builds `myapp:latest`, then tries to push
+`myregistry.com/myapp:latest` — fails "image does not exist locally."
+DIAGNOSIS: missing `docker tag` step between build and push — built
+name and pushed name don't match; docker tag doesn't create new
+content, just adds a label, and that step was skipped. Fix: build
+directly with full registry name, or add explicit docker tag step.
+(Initial answer reached for :latest ambiguity — tangentially related
+but not the actual bug; corrected after re-reading the literal error
+message. Good self-correction skill under pressure.)
+
+**Scenario 3**: Worker container `Up 3 days`, no errors in logs, but
+not processing jobs — queue backing up. DIAGNOSIS: "Up" only confirms
+the process hasn't crashed, NOT that it's functionally working —
+likely deadlocked or silently lost queue connection. No HEALTHCHECK
+defined means Docker has no way to detect this and never restarts it.
+Investigation path: docker stats (resource anomalies) → docker exec
+(inspect actual process state) → docker inspect (config review). Real
+fix: add a proper HEALTHCHECK that verifies actual job-processing
+activity, not just process existence. (Directly closes the loop on
+P22's HEALTHCHECK lesson and P24's "Up ≠ working" lesson.)
+
+KEY TAKEAWAY: two of three scenarios were genuine "Up but not working"
+or "config mismatch" traps — the interview pattern of this module
+(P12, P18, P22, P24 all touched this same theme) paid off directly
+here.
