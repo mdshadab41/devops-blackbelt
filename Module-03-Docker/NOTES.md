@@ -803,3 +803,50 @@ FULL CHAIN under the hood (docker run hello-world):
 
 Chain: docker (client) → dockerd (daemon) → containerd (runtime
 manager) → runc (low-level kernel executor)
+
+
+
+## M03-P24 — RCA: Container OOM-Killed in "Prod" (Unguided)
+
+**Problem**: Users reported intermittent image upload failures;
+container found to have restarted at least once.
+
+**Impact**: Uploads failing unpredictably for end users.
+
+**Timeline**: Reproduced under concurrent load (5 simultaneous
+requests via `for i in {1..5}; do curl ... & done; wait`) — 2 of 5
+succeeded, 3 failed with "Empty reply from server" / "end of response
+with 10 bytes missing". Container found with shorter uptime than
+creation time; duplicate Flask startup banners in `docker logs`
+confirmed a prior crash/restart.
+
+**Root Cause**: Flask's built-in dev server (`app.run()`) is
+single-threaded by default — concurrent requests queue up, some
+connections get dropped/reset. INITIAL HYPOTHESIS WAS WRONG: suspected
+OOM from the `--memory=100m` limit (each request allocates 50MB), but
+`docker inspect --format='{{.State.OOMKilled}}'` returned `false` on
+the actual failed run, ruling out memory as the cause. Confirmed via
+control test: same concurrent load WITHOUT any memory limit still
+showed inconsistent results — a hard resource limit would fail
+predictably once exceeded, not inconsistently, which itself pointed
+toward a concurrency/timing issue instead.
+
+**Resolution**: Replace Flask's dev server with a production-grade
+WSGI server (e.g. Gunicorn) with multiple worker processes/threads.
+
+**Preventive Action**: Never deploy Flask's dev server to production —
+Flask itself warns on every startup. Add a lint/check for `app.run()`
+in production configs before deployment.
+
+**Lessons Learned**: The "obvious" hypothesis (memory limit, since
+that's what was configured in the scenario) was a RED HERRING. Always
+verify root cause with direct evidence (`docker inspect`'s OOMKilled
+field is the definitive check) rather than assuming based on what's
+configured. Inconsistent/intermittent failures under load are a
+stronger signal for concurrency/threading issues than for resource
+limits — genuine memory/CPU limit failures tend to be predictable and
+consistent once truly exceeded, not sporadic.
+
+KEY TAKEAWAY: this was the most valuable RCA of the module precisely
+BECAUSE the initial hypothesis was wrong — real debugging means
+following evidence even when it contradicts your first assumption.
