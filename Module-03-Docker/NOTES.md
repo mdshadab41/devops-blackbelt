@@ -886,3 +886,52 @@ KEY TAKEAWAY: two of three scenarios were genuine "Up but not working"
 or "config mismatch" traps — the interview pattern of this module
 (P12, P18, P22, P24 all touched this same theme) paid off directly
 here.
+
+## Mini Project — Real Incident: EBS Disk Full, Permanent Fix
+
+While running Trivy on the Mini Project, hit "no space left on device" AGAIN
+(same pattern as P16/P18), even after cleaning up Docker images/cache. Root
+cause this time: the EC2's disk was just genuinely too small (8GB) for the
+combined weight of Docker + Trivy's growing vulnerability database (110MB+
+compressed, larger when decompressed). Decided to permanently increase disk
+size instead of repeatedly cleaning up — AWS Free Tier allows up to 30GB of
+EBS storage at no cost, and the instance was only using 8GB, so there was
+real room to grow for free.
+
+**In simple terms, increasing EC2 disk size is a 4-step process:**
+
+1. Find your instance's volume ID — the disk isn't found by instance name
+   directly; had to first ask AWS "what is my own instance ID" using a
+   special internal address (169.254.169.254) that only works from inside
+   an EC2 instance. Real gotcha: newer AWS instances require an extra
+   "get a token first" step (called IMDSv2) before this works — a plain
+   request without the token silently returns nothing.
+   TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+   curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id
+   Then find the volume attached to that instance:
+   aws ec2 describe-volumes --filters "Name=attachment.instance-id,Values=<instance-id>" --query "Volumes[*].{ID:VolumeId,Size:Size}" --output table
+
+2. Resize the actual AWS disk (the "volume") — tell AWS to make the disk
+   bigger. Runs in the background, no instance stop needed for gp3 volumes:
+   aws ec2 modify-volume --volume-id <volume-id> --size 20
+
+3. Tell the operating system's PARTITION to use the new space — resizing
+   the AWS disk doesn't automatically tell Linux to use the new space.
+   This step "grows" the partition to match:
+   sudo growpart /dev/nvme0n1 1
+
+4. Tell the FILESYSTEM to use the new space — one more step, since the
+   partition and filesystem inside it are two different layers. Check
+   filesystem type first (df -T / — ext4 in our case), then extend it:
+   sudo resize2fs /dev/nvme0n1p1
+
+Result: disk went from 6.7GB total (84% full, ~1GB free) to 19GB total
+(31% full, 13GB free) — permanently fixed, no ongoing cost since still
+under AWS's 30GB Free Tier limit.
+
+Key lesson: resizing a cloud disk is NOT one command — it's actually 4
+separate layers that all need updating (AWS's volume, the physical disk
+device, the partition, the filesystem), and each layer only "sees" the
+new size once the layer below it has been explicitly told to grow.
+Verified progressively with lsblk (disk level) and df -h (filesystem
+level) at each step, rather than assuming one command fixed everything.
