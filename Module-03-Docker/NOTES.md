@@ -935,3 +935,47 @@ device, the partition, the filesystem), and each layer only "sees" the
 new size once the layer below it has been explicitly told to grow.
 Verified progressively with lsblk (disk level) and df -h (filesystem
 level) at each step, rather than assuming one command fixed everything.
+
+## Mini Project — How to Push an Image to ECR (Step by Step, Simple)
+
+Step 1: Create a "folder" in ECR for your app
+ECR needs a named place to store your image first, like creating a
+folder before saving a file into it.
+aws ecr create-repository --repository-name <app-name> --region <region>
+This gives you back a "repositoryUri" — a long address like
+806528484602.dkr.ecr.ap-south-1.amazonaws.com/<app-name> — this is
+where your image will actually live.
+
+Step 2: Log in to ECR
+ECR is private, so you need to prove you're allowed in before pushing
+anything. This fetches a temporary password from AWS and feeds it
+straight into Docker's login — you never see or type the password
+yourself.
+aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin <account>.dkr.ecr.<region>.amazonaws.com
+Note: this login expires after 12 hours — if you come back later and
+pushing fails, just run this command again.
+
+Step 3: Give your local image ECR's address
+Your image already exists locally under a simple name (like
+myapp:1.0.0). docker tag doesn't create a new image — it just adds a
+SECOND name to the same image, this time matching ECR's exact address
+format.
+docker tag myapp:1.0.0 <account>.dkr.ecr.<region>.amazonaws.com/myapp:1.0.0
+
+Step 4: Actually push it
+docker push <account>.dkr.ecr.<region>.amazonaws.com/myapp:1.0.0
+This uploads every layer of the image to ECR. The very first push to a
+brand-new repo uploads everything (even the base image layers), since
+ECR has never seen any of it before — later pushes will be faster if
+only a few layers changed.
+
+Step 5 (optional but recommended): Get the exact digest
+A "digest" is a fixed, unchangeable ID for this exact image — safer to
+reference than a tag (like :latest or :1.0.0), which could later point
+to different content.
+docker inspect --format='{{index .RepoDigests 0}}' <account>.dkr.ecr.<region>.amazonaws.com/myapp:1.0.0
+This gives you something like myapp@sha256:abc123... — use THIS exact
+reference for anything security-sensitive, like signing the image.
+
+That's the full flow: create repo → log in → tag → push → (optionally
+grab the digest for signing/verification).
