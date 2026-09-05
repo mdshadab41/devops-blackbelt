@@ -1057,3 +1057,22 @@ Key things to remember:
    yours and untouched
 6. (In a real company) — Kubernetes or a CI/CD gate would automatically
    check all of this before ever allowing the image to run in production
+
+## Mini Project — HEALTHCHECK Timing Correction (Real Debugging)
+
+Initially assumed a single failed HEALTHCHECK would immediately mark a
+container unhealthy. WRONG. Docker's HEALTHCHECK has a default
+--retries=3 AND default --interval=30s — meaning a container only
+flips to (unhealthy) after 3 CONSECUTIVE failures, roughly 90+ seconds
+minimum, not immediately.
+
+Proved live: stopped Redis, waited only 35s — web still showed
+(healthy). Waited 110s instead — web correctly showed (unhealthy).
+Verified the exact default values (retries=3, interval=30s) via
+research rather than continuing to guess after the first attempt
+didn't match expectations.
+
+Lesson: when a live test doesn't match your prediction, don't just
+retry the same thing — investigate the actual defaults/mechanics
+involved. A wrong assumption about timing can look identical to "it's
+broken" if you don't wait long enough to see the real behavior.
