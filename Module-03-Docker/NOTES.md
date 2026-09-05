@@ -979,3 +979,81 @@ reference for anything security-sensitive, like signing the image.
 
 That's the full flow: create repo → log in → tag → push → (optionally
 grab the digest for signing/verification).
+
+## Mini Project — How Trivy, Dockle, and Cosign Work (Simple Explanation)
+
+These three tools each check a DIFFERENT thing about your image — they
+don't overlap, they complement each other.
+
+### Trivy — "Does this image contain any KNOWN security bugs?"
+Trivy looks inside your built image and makes a list of every piece of
+software in it — the OS packages (from Alpine/Debian) AND every Python
+package you installed (flask, redis, etc.). It then checks that list
+against public databases of known vulnerabilities (CVEs) — think of it
+like checking every ingredient in a meal against a public list of
+recalled/unsafe food items.
+
+How to run it:
+    trivy image --severity CRITICAL <image-name>
+
+Key things to remember:
+- It does NOT read your Dockerfile at all — only the FINAL, built image
+- A high total number of findings is normal for any real image — what
+  matters is filtering by severity (CRITICAL first) and checking if a
+  fix ("Fixed Version") actually exists yet
+- Sometimes there's no fix available (a package might be marked
+  "essential" and can't be safely removed) — in that case, the real fix
+  is often switching to a smaller base image (like Alpine) that never
+  included the risky package in the first place
+
+### Dockle — "Was this image BUILT the right way?"
+Dockle doesn't care about known bugs in packages — it checks HABITS and
+CHOICES made while building the image. Things like: is the container
+running as root (bad habit), did you leave leftover cache files behind
+(wasteful), are you using a "latest" tag instead of a real version
+number (risky), is there a health check defined (good practice).
+
+How to run it:
+    dockle <image-name>
+
+Key things to remember:
+- Its warning levels (FATAL/WARN/INFO) reflect how AVOIDABLE something
+  is, not necessarily how DANGEROUS it is — a FATAL might just be
+  "there's zero reason not to fix this," while a WARN might have
+  legitimate exceptions sometimes
+- Dockle checks EVERY layer in the image, including ones baked into the
+  official base image you didn't write yourself — if you see a finding
+  you don't recognize, check if it's actually coming from something
+  like python:3.11-alpine's own internal build steps, not your own code
+
+### Cosign — "Can I PROVE this image genuinely came from me, untouched?"
+Trivy and Dockle both check the CONTENT of an image. Cosign checks
+something completely different: WHO made it and whether it's been
+tampered with since. It works like a wax seal on a letter — using a
+private key (kept secret) to "sign" the image, and a public key
+(shareable with anyone) to let others check that the seal is genuine
+and hasn't been broken.
+
+How to use it:
+    cosign sign --key mykey.key <image>@sha256:...
+    cosign verify --key mykey.pub <image>@sha256:...
+
+Key things to remember:
+- ALWAYS sign using the digest (sha256:...), never a tag like :latest
+  — a tag can be moved to point at different content later, which
+  would make your signature meaningless; a digest can never change
+- Signing needs your PRIVATE key + a password (proves it's really you)
+- Verifying only needs the PUBLIC key, no password (anyone can check,
+  nobody but you can create a new valid signature)
+- If someone tries to verify with the WRONG key, it fails clearly —
+  that's the whole point, it proves fakes can't slip through
+
+### How they fit together in one pipeline
+1. Build the image
+2. Trivy — check for known vulnerabilities inside it
+3. Dockle — check it was built following good practices
+4. Push it to a registry (ECR)
+5. Cosign — sign it so anyone downstream can verify it's genuinely
+   yours and untouched
+6. (In a real company) — Kubernetes or a CI/CD gate would automatically
+   check all of this before ever allowing the image to run in production
