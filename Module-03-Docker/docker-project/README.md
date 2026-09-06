@@ -13,6 +13,26 @@ Routes:
 - GET / — increments and returns the visit count
 - GET /health — checks Redis connectivity, returns 200 (healthy) or 503 (unhealthy) — deliberately separate from / so health checks never pollute the actual visit count
 
+
+
+## Screenshots
+
+**1. Compose startup — health-based service ordering:**
+![Compose startup](screenshots/01-compose-startup.png)
+
+**2. Visit counter incrementing correctly:**
+![Counter increments](screenshots/02-counter-increments.png)
+
+**3. Failure and automatic recovery — Redis stopped, app correctly marked unhealthy, both recover automatically:**
+![Failure and recovery](screenshots/03-failure-recovery.png)
+
+**4. Security scans — Trivy (0 critical vulnerabilities):**
+![Trivy scan](screenshots/04-security-scans-trivy.png)
+
+**5. Security scans — Dockle (only unfixable base-image finding remains):**
+![Dockle scan](screenshots/05-security-scans-dockle.png)
+
+
 ## Key Design Decisions
 
 Multi-stage build + Alpine final image: Stage 1 (python:3.11-slim) installs dependencies where pip/build tools work reliably. Stage 2 (python:3.11-alpine) only copies the finished result. Result: 116MB final image, and zero CRITICAL CVEs (Trivy), since Alpine's minimal package set never included the vulnerable packages found in the slim-based equivalent.
@@ -62,3 +82,5 @@ Image pushed to AWS ECR: 806528484602.dkr.ecr.ap-south-1.amazonaws.com/visit-tra
 ## Tech Stack
 
 Flask 3.1.3, Redis 8.1.0 (redis-py client), Docker multi-stage builds, python:3.11-slim (build) to python:3.11-alpine (runtime), Docker Compose, Trivy, Dockle, Cosign, AWS ECR.
+
+
