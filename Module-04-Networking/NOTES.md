@@ -240,3 +240,61 @@ UDP does ZERO handshake steps - it is "connectionless." The sender
 fires real data immediately with no upfront check that the destination
 is even listening. TCP is "connection-oriented" - the handshake
 literally establishes a tracked conversation before data flows.
+
+## M04-P04 - curl Deep-Dive
+
+### Why curl Hides Details by Default
+Same reasoning as DNS caching (P02) - most of the time you just want
+the actual content (webpage/JSON), not the plumbing underneath. But
+when something breaks, the plumbing (connection status, headers,
+timing) becomes the important part, not the content. curl hides
+detail by default for clean everyday use, but reveals it on request
+via the -v (verbose) flag - exactly when debugging needs it most.
+
+### Reading `curl -v` Output
+Command used: curl -v http://localhost
+
+Real output showed:
+- "Host localhost:80 was resolved" - DNS resolution step happens even
+  for localhost (same chain as P02)
+- IPv6 (::1) and IPv4 (127.0.0.1) - both are loopback ("myself"),
+  just two different address formats for the same concept from P01
+- "connect ... failed: Connection refused" - fast, active rejection,
+  not a timeout
+
+### Refused vs Timeout - Generalized Rule (correction made this session)
+Refused = OS-level, INSTANT rejection meaning "nothing is listening on
+this port on this machine." This applies regardless of WHICH port
+number is being tested, and applies even for localhost traffic where
+NO Security Group is ever involved (localhost never crosses a real
+network boundary).
+
+Timeout = a SILENT drop that happens BEFORE the request ever reaches
+the destination machine's OS at all. This always implies a real
+network hop was involved (Security Group, firewall, routing issue) -
+timeout can never happen for pure localhost traffic, because there is
+no network boundary to be blocked at.
+
+### Why curl -v on localhost:80 Showed "Refused"
+Nginx is not installed yet, so nothing is listening on port 80. When
+the request arrives, the OS (kernel) itself - not any app - instantly
+detects "no application here" and sends back the refusal. This happens
+at the OS level with zero app involvement, and confirmed to behave
+identically when tested against port 5000 (no Flask app running there
+either) - same refused result, same reasoning, proving the behavior is
+about "is anything listening" and not about which specific port number
+is used.
+
+### Why This Matters Going Forward
+This refused-vs-timeout distinction, now fully generalized, is the
+FIRST diagnostic check for every incident from M04-P11 onward. Refused
+points to an app/OS-level problem on the target machine. Timeout points
+to a network-layer block (Security Group, firewall) before the machine
+was ever reached.
+
+### Key Takeaway
+curl -v reveals the full connection plumbing (DNS resolution, IP
+attempts, connect result) hidden by default. "Refused" always means
+OS-confirmed "nothing is listening" regardless of port or whether it
+is localhost. "Timeout" always implies a real network-layer block
+occurred before the destination machine's OS was ever reached.
