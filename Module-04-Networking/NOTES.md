@@ -536,3 +536,42 @@ merging, and must be explicitly checked for. Always validate config
 with -t and prefer reload over restart for zero-downtime changes. When
 something works locally but fails externally with a timeout, the
 Security Group is the first thing to check, per the 3-layer model.
+
+### Real Incident: Silent Config Bug - & Instead of $ in proxy_set_header
+While saving a copy of the live Nginx config for the repo, discovered
+the actual running config had a typo: proxy_set_header Host &host; and
+X-Real-IP &remote_addr; (ampersand instead of dollar sign for Nginx
+variables).
+
+Critical finding: `nginx -t` did NOT catch this as an error. Reasoning:
+Nginx variables use $ syntax (e.g. $host, $remote_addr) to mean "fill
+in the real value dynamically per request." &host is not invalid
+syntax to Nginx's parser - it is simply treated as a literal string.
+So the config was 100% syntactically VALID, just functionally WRONG -
+same "build succeeds but behavior is wrong" lesson as M03-P12, applied
+to config instead of code.
+
+Impact: Flask would have received the literal text "&host" as a
+header value instead of the real hostname, and "&remote_addr" instead
+of the visitor's real IP - meaning Flask could never actually tell who
+the real visitor was, defeating the purpose of these headers entirely.
+
+Also discovered: `curl -v` cannot verify this kind of bug, because it
+only shows the CLIENT-to-NGINX conversation, not the separate
+NGINX-to-FLASK conversation happening behind the scenes. Proper
+verification required modifying the Flask app itself to echo back the
+headers it actually received (request.headers.get(...)), proving the
+fix with real evidence rather than trusting curl's client-side view.
+
+Fixed by correcting to $host and $remote_addr, reloading Nginx, and
+confirming via Flask's own echoed response: "Host=127.0.0.1,
+X-Real-IP=127.0.0.1" (both correctly showing the real dynamic values
+when tested locally - X-Real-IP would show the actual external IP
+when tested from an outside client instead of the server itself).
+
+### Key Lesson Added
+A config passing `nginx -t` only proves syntax validity, not semantic
+correctness. Testing must verify actual BEHAVIOR (what the destination
+app really receives), not just that the reverse proxy responds with
+a 200 - the response body/status can look completely fine while the
+proxy is silently forwarding wrong or useless header data underneath.
