@@ -204,3 +204,39 @@ TCP hides network problems from the user by fixing them automatically,
 at the cost of speed. UDP is fast because it does not bother fixing
 anything, which is why the SAME network issue produces very different
 visible symptoms depending on which protocol is carrying the traffic.
+
+### Real-World Application: How Zoom Uses BOTH TCP and UDP
+Most real applications don't use purely one protocol - they split
+traffic based on what each specific TYPE of data actually needs.
+
+Zoom example:
+- Joining a meeting (authentication, meeting ID verification) -> TCP.
+  Must complete reliably, no partial/lost steps allowed - matches
+  TCP's connection-oriented, guaranteed-delivery design.
+- Live video/audio stream -> UDP. A dropped frame/glitch is far less
+  disruptive than pausing the whole stream to wait for a perfect
+  re-send. Same reasoning as the video-freezing example above.
+- Text chat during the call -> TCP. A silently dropped chat message
+  would just vanish with no warning (unacceptable) - every character
+  must arrive, correctly, in order.
+
+Interview-level insight: when asked "does a video calling app use TCP
+or UDP," the strong answer is "it depends on the type of traffic
+within the app" - not picking just one. Real systems intelligently
+split traffic by protocol based on whether reliability or speed
+matters more for that specific piece of data.
+
+### TCP's 3-Way Handshake (added detail)
+1. SYN - client: "I want to connect, are you there?"
+2. SYN-ACK - server: "Yes, heard you (ACK), and confirming my side
+   works too (SYN)"
+3. ACK - client: "Confirmed, line works both ways, let's begin"
+
+Only after all 3 steps complete does real data ever move. This is
+exactly why TCP is slower than UDP - 3 full round trips happen BEFORE
+a single byte of actual data (e.g. a curl request) is sent.
+
+UDP does ZERO handshake steps - it is "connectionless." The sender
+fires real data immediately with no upfront check that the destination
+is even listening. TCP is "connection-oriented" - the handshake
+literally establishes a tracked conversation before data flows.
