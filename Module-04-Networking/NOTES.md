@@ -298,3 +298,113 @@ attempts, connect result) hidden by default. "Refused" always means
 OS-confirmed "nothing is listening" regardless of port or whether it
 is localhost. "Timeout" always implies a real network-layer block
 occurred before the destination machine's OS was ever reached.
+
+## M04-P05 - Network Diagnostics Toolkit (ss, netstat, tcpdump, traceroute, nc)
+
+### ss - Socket Statistics (modern replacement for netstat)
+Command used: ss -tuln
+Flags: -t (TCP), -u (UDP), -l (listening only), -n (port numbers, no
+DNS lookup - same lookup cost concept from P02)
+
+Real output showed SSH (0.0.0.0:22 - all interfaces, reachable from
+outside per P01's binding rule) and another service on 127.0.0.1:6010
+(loopback only - unreachable from outside regardless of Security Group).
+
+### Refined 3-Layer Failure Model
+Testing curl to 127.0.0.1:6010 from an external laptop revealed the
+full, corrected layered order for ANY connection attempt:
+1. Security Group (outermost gate, checked FIRST) - blocked here =
+   TIMEOUT (silent drop, request never proceeds further)
+2. Network interface / binding (0.0.0.0 vs 127.0.0.1) - reaches the
+   machine but wrong interface = REFUSED (OS-level, instant)
+3. The application itself (crashed / not running) - nothing listening
+   on the correct interface+port = also REFUSED
+
+Key correction: "refused" can ONLY happen if the request successfully
+passes the Security Group first. Diagnosis should always proceed
+outside-in: Security Group -> binding/interface -> application.
+
+### nc (netcat) - Fast Port Reachability Test
+Commands used and real results:
+- nc -zv localhost 22 -> "succeeded" (matches ss -tuln showing SSH
+  listening)
+- nc -zv localhost 9999 -> "Connection refused" (matches P04's OS-level
+  instant rejection model - nothing listening, no Security Group
+  involved for localhost)
+
+nc is faster than curl for pure reachability checks since it does not
+attempt a full HTTP request - just tests if the TCP port accepts a
+connection.
+
+### traceroute - Mapping the Network Path Hop by Hop
+Command used: traceroute google.com
+
+Confirmed real traffic passes through MANY intermediate hops (not a
+direct connection) before reaching the destination (final hop reached
+Google's own domain, 1e100.net).
+
+Real incident along the way: traceroute was not installed, and
+installing it failed due to an UNRELATED broken kernel headers
+dependency (linux-headers-aws expected version 1011, but 1011 was not
+actually installed - leftover from an earlier incomplete kernel
+update, unrelated to networking). Root-caused via `apt list --installed
+| grep linux-headers` + `uname -r` comparison, fixed properly via
+`apt --fix-broken install` (installs the missing headers package,
+does NOT touch the running kernel or require a reboot) rather than
+blindly following the suggested command without understanding it first.
+
+Key finding: some hops showed `* * *` (no reply). CORRECTED
+ASSUMPTION: this does NOT mean that hop is broken. Each router's
+"time expired" reply during traceroute is OPTIONAL - many routers
+(especially at large companies) are deliberately configured to stay
+silent for security reasons (avoiding revealing internal network
+layout), while still correctly forwarding real traffic onward. Proven
+by the fact that traceroute still successfully reached the final
+destination despite 9 silent hops along the way. Lesson: silence does
+not always mean broken - sometimes it just means "this thing chose not
+to respond to this specific kind of probe."
+
+### tcpdump - Capturing Real Live Packets (strongest possible evidence)
+Real incident encountered: first two attempts to capture a NEW
+connection's handshake failed - captured output only showed ongoing
+traffic from the ALREADY-ESTABLISHED SSH session in use, not a new
+connection, because (a) no second SSH session was actually opened, and
+(b) a race condition where nc's near-instant connect/disconnect
+completed before tcpdump (started in the background) was fully ready
+to capture.
+
+Fixed by: starting tcpdump first, adding an explicit sleep to guarantee
+it was ready, watching the correct interface (lo for loopback traffic,
+not ens5), then firing nc separately.
+
+Captured a COMPLETE real TCP 3-way handshake:
+1. Flags [S] (SYN only) - client (ephemeral port 42220) to server
+   port 22: "are you there?"
+2. Flags [S.] (SYN+ACK) - server to client: "yes, heard you, and here
+   is my own request back"
+3. Flags [.] (ACK only) - client to server: "confirmed, begin"
+
+Followed immediately by connection teardown (Flags [F] = graceful
+finish request, Flags [R] = reset/abrupt termination) since nc -zv
+was only testing reachability, not sending real data.
+
+Confirms two things directly with real evidence: (1) the exact 3-step
+handshake sequence documented in P03 actually happens exactly as
+described, and (2) the ephemeral port (42220, a new random number each
+run) matches the exact behavior predicted all the way back in the
+very first P01 exercise ("it gives new one").
+
+### Why This Matters Going Forward
+The 3-layer failure model (Security Group -> binding -> application)
+is the exact systematic diagnostic sequence for M04-P11 through P13.
+tcpdump is the strongest possible evidence tool for proving whether
+traffic is even arriving at a machine, which will be critical for
+unguided RCA work in P20-P21.
+
+### Key Takeaway
+ss -tuln reveals what is listening and on which interface. nc gives
+fast reachability answers without a full HTTP request. traceroute maps
+the path traffic takes and silence at a hop does not necessarily mean
+broken. tcpdump provides direct, undeniable proof of what is actually
+happening on the wire - including a live-captured proof of the TCP
+handshake theory from P03.
