@@ -408,3 +408,131 @@ the path traffic takes and silence at a hop does not necessarily mean
 broken. tcpdump provides direct, undeniable proof of what is actually
 happening on the wire - including a live-captured proof of the TCP
 handshake theory from P03.
+
+## M04-P06 - Install and Configure Nginx as a Reverse Proxy in Front of a Flask App
+
+### The Core Idea
+Nginx acts as the "receptionist" (from the P01 analogy) - the outside
+world only ever talks to Nginx (port 80, the standard expected port),
+and Nginx quietly forwards requests internally to the actual app
+(Flask, on its own internal port), which the outside world never
+needs to know about directly.
+
+### Why Flask Binds to 127.0.0.1, Not 0.0.0.0 (Defense in Depth)
+Once Nginx handles all outside traffic, the ONLY thing that needs to
+reach Flask directly is Nginx itself - and both run on the same
+machine, so loopback (127.0.0.1) is sufficient. Locking Flask to
+127.0.0.1 means nobody can bypass Nginx and hit Flask directly from
+the outside, even if they somehow knew the internal port - enforcing
+"the only path in MUST go through Nginx." This is a real production
+security pattern called defense in depth, directly using the binding
+concept from P01.
+
+Contrast: Nginx itself binds to 0.0.0.0:80, because ITS job is to
+accept traffic from outside. Same binding concept, opposite
+requirement, based on each service's actual role.
+
+### Real Incident: Duplicate Flask Process on Port 5000
+First attempt to start Flask failed with "Address already in use."
+Investigated with `ss -tuln | grep 5000` + `ps aux | grep app.py`
+rather than assuming - found TWO python3 app.py processes had been
+started (one from an earlier command, unnoticed). The first (already
+running) instance was correctly answering curl requests, while the
+second correctly failed to bind (OS prevents two processes listening
+on the same port+interface). Fixed by killing the stray process and
+restarting cleanly with exactly one instance.
+
+### Nginx Config - Reverse Proxy Block
+File: /etc/nginx/sites-available/flask-proxy (symlinked into
+sites-enabled/)
+
+server {
+    listen 80;
+    server_name _;
+
+    location / {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+
+proxy_pass http://127.0.0.1:5000; is the actual forwarding line.
+Important: NGINX itself is the one making this request to Flask, not
+the original outside visitor - Nginx receives the external request on
+0.0.0.0:80, then acts as its own client to open a SEPARATE connection
+to Flask via loopback. Flask sees the request as coming from 127.0.0.1
+because it genuinely is, from Nginx's perspective - the original
+outside visitor never touches Flask directly.
+
+### Real Incident: Config Conflict (default vs flask-proxy)
+`sudo nginx -t` produced a warning: "conflicting server name '_' on
+0.0.0.0:80, ignored" - both the default Nginx config AND the new
+flask-proxy config used server_name _; (generic catch-all) on the
+same port. Verified which one Nginx was actually using via
+`ls -la /etc/nginx/sites-enabled/` and `sudo nginx -T | grep -A2
+server_name` rather than guessing - confirmed the OLDER config
+(default, created first) was winning, which explained why curl was
+still showing the default "Welcome to nginx!" page instead of the
+Flask response.
+
+Fix: disabled (did not delete) the default site by removing only its
+symlink from sites-enabled/, keeping the original file in
+sites-available/ for reference:
+sudo rm /etc/nginx/sites-enabled/default
+
+### nginx -t - Why Validate Before Reloading
+nginx -t checks config file syntax WITHOUT actually applying or
+disrupting the running service - catches typos/mistakes safely before
+a real reload. Standard production habit: always validate before
+reloading.
+
+### reload vs restart - Zero Downtime Principle
+reload: tells the already-running Nginx process to re-read its config
+and apply changes gracefully - existing connections finish normally,
+new connections immediately use the new config. Zero downtime.
+
+restart: fully stops the process, then starts a new one - a real,
+however brief, gap where connections fail. Should be avoided for
+routine config changes whenever the service supports a graceful
+reload (Nginx does).
+
+This is directly relevant to the "zero downtime deployment" Manager
+Task later in this module (M04-P17/P18).
+
+### Real Incident: Security Group Blocking External Access
+After fixing the Nginx config conflict, curl from the SERVER itself
+(127.0.0.1) succeeded correctly. But accessing http://<public-ip> from
+an external browser produced "took too long to respond" - a TIMEOUT,
+not a refused error.
+
+Applied the P05 3-layer model directly: since Nginx was confirmed
+working locally (ruling out binding/application layers), the only
+remaining layer outside the EC2 instance entirely is the Security
+Group - the outermost gate. Verified in the AWS console: port 80 had
+NO inbound rule (only port 22/SSH was allowed). Added an inbound rule
+for port 80, re-tested from the external browser - succeeded
+immediately, receiving the real Flask response through the full chain.
+
+This is a genuine, real-world confirmation of the 3-layer model built
+in P05: Security Group (was blocking = timeout) -> binding (Nginx
+0.0.0.0, Flask 127.0.0.1, both correct) -> application (Flask running
+correctly) - working outside-in identified the actual root cause
+directly, not by guessing.
+
+### Why This Matters Going Forward
+This exact "works locally but times out externally -> check Security
+Group first" pattern is precisely what M04-P11 (Security Group
+incident) and M04-P13 (502 Bad Gateway incident) will test formally -
+this problem was effectively a live, unscripted version of that same
+incident type.
+
+### Key Takeaway
+A reverse proxy works by having Nginx (external-facing, 0.0.0.0)
+forward requests to an internal-only app (Flask, 127.0.0.1) - the
+outside world never talks to the app directly. Config conflicts
+between multiple enabled sites are resolved by load order, not
+merging, and must be explicitly checked for. Always validate config
+with -t and prefer reload over restart for zero-downtime changes. When
+something works locally but fails externally with a timeout, the
+Security Group is the first thing to check, per the 3-layer model.
