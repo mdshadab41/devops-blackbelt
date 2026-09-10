@@ -149,3 +149,58 @@ DNS lookups involve multiple hops (local cache to stub resolver to
 upstream to authoritative), and TTL controls how long a wrong/stale
 answer can survive after being fixed. TTL decisions must be made
 BEFORE an incident, not during one.
+
+## M04-P03 - TCP vs UDP
+
+### The Core Difference
+TCP = "phone call" - guarantees everything arrives, correctly, in order.
+UDP = "fire and move on" - no guarantees, no re-sending lost data.
+
+### TCP's Defining Behaviors
+1. Handshake first (3-way handshake: SYN, SYN-ACK, ACK) before any real
+   data moves - both sides confirm "ready?" first
+2. Guaranteed delivery - if data is lost, TCP notices and re-sends it
+3. Guaranteed order - pieces are reassembled in correct order even if
+   they arrive out of order over the network
+
+### UDP's Defining Behavior
+No handshake, no delivery guarantee, no re-sending. Fires data and
+moves on. If something is lost, it is simply gone - nobody notices
+or fixes it.
+
+### Speed Tradeoff (correction made during this session)
+UDP is faster than TCP, not the other way around. TCP's handshake and
+constant "did you get that?" confirmation checks all take extra time
+(each check is a round trip). UDP skips all of that, so there is less
+total work before data arrives - hence faster, but with zero guarantees.
+
+### Who Uses What
+- TCP: HTTP/web traffic (Flask, curl, browsers), file transfers -
+  correctness matters more than raw speed
+- UDP: live video calls, gaming, DNS lookups - speed matters more than
+  guaranteed delivery of every single piece
+
+### Diagnostic Framework: "What does each side actually DO?"
+1. Identify the two things being compared
+2. State each one's ONE defining behavior, in one sentence
+3. Apply that behavior directly to the scenario - what would you
+   EXPECT to happen, given that behavior?
+4. If your expectation matches the scenario, that is likely the
+   correct root cause - state it using the actual behavior as the
+   reason, not just "because that is how it works"
+
+### Applied Example: Video Call Freezing, Website Fine
+Rough network conditions cause packet loss on both TCP and UDP traffic.
+- TCP (website): lost packet is automatically re-sent - page loads
+  slightly slower but arrives complete. Problem is hidden from the user.
+- UDP (video call): lost packet (one video frame) is never re-sent -
+  it is just gone. This shows up as a visible freeze/glitch on screen.
+
+This is not a bug - it is UDP's design tradeoff working exactly as
+intended (speed over reliability).
+
+### Key Takeaway
+TCP hides network problems from the user by fixing them automatically,
+at the cost of speed. UDP is fast because it does not bother fixing
+anything, which is why the SAME network issue produces very different
+visible symptoms depending on which protocol is carrying the traffic.
