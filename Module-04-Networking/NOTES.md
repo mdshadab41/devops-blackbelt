@@ -575,3 +575,39 @@ correctness. Testing must verify actual BEHAVIOR (what the destination
 app really receives), not just that the reverse proxy responds with
 a 200 - the response body/status can look completely fine while the
 proxy is silently forwarding wrong or useless header data underneath.
+
+### ufw vs iptables - The Real Relationship (gap identified and filled)
+ufw does NOT replace or run alongside iptables as a separate system.
+ufw is a HIGH-LEVEL ABSTRACTION - a simpler, human-friendly interface
+that automatically generates and manages real, low-level iptables
+rules underneath. Same actual enforcement engine, different level of
+complexity to interact with.
+
+Comparison - same rule, two ways:
+ufw:      sudo ufw allow 22/tcp
+iptables: sudo iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+
+The iptables version requires understanding chains, targets, and jump
+syntax just to allow one port - ufw reduces this to near-plain-English,
+which is why it exists ("Uncomplicated Firewall") despite iptables
+already existing and doing the same job.
+
+### Proof (verified live on this EC2)
+Ran: sudo iptables -L -n
+Found custom chains automatically created by ufw: ufw-before-input,
+ufw-after-input, ufw-reject-input, ufw-track-input, etc. - direct,
+real proof that ufw was silently managing actual iptables rules the
+whole time, despite never running a single raw iptables command
+directly.
+
+Bonus finding: DOCKER-USER and DOCKER-FORWARD chains were also present
+in the same output - Docker (from Module 03) also directly manipulates
+iptables automatically for container networking. Real production
+gotcha worth knowing: Docker and ufw both independently modify the
+same underlying iptables system without coordinating with each other,
+which can occasionally cause rule conflicts in real environments.
+
+### Key Takeaway (added)
+ufw = high-level abstraction. iptables = low-level engine actually
+enforcing the rules. ufw generates real iptables rules automatically;
+it does not replace iptables or work independently of it.
