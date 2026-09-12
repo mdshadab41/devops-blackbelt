@@ -720,3 +720,134 @@ two should not be assumed to be the same "it must have used my key
 somehow" explanation. Timeout during SSH always implicates the
 Security Group layer, but the specific cause among several
 possibilities requires direct verification, not assumption.
+
+## M04-P09 - Nginx Load Balancing (Round-Robin, Least-Connections, IP-Hash)
+
+### Why Load Balancing Exists
+Two distinct benefits from running multiple identical backend
+instances behind Nginx instead of one:
+1. PERFORMANCE (horizontal scaling) - spreads load across multiple
+   instances so no single one gets overwhelmed, vs vertical scaling
+   (making one instance more powerful)
+2. AVAILABILITY - if one instance crashes, traffic continues flowing
+   to the survivors instead of total outage
+
+### DRY Principle Applied to Test Apps
+app.py was refactored to accept the port as a command-line argument
+(sys.argv[1]) instead of creating 3 separate hardcoded files. Reason:
+one file to maintain - any bug fix or change automatically applies to
+all instances, rather than needing the same edit repeated 3 times
+across separate files (easy to fix 2 and forget the 3rd).
+
+### upstream Block - The Core Mechanism
+upstream flask_backend {
+    server 127.0.0.1:5001;
+    server 127.0.0.1:5002;
+    server 127.0.0.1:5003;
+}
+"flask_backend" is NOT a real DNS hostname - it is an internal alias
+name Nginx recognizes only within this config, scoped to the upstream
+block directly above it. proxy_pass http://flask_backend; tells
+Nginx "pick one server from this named group" rather than pointing to
+one fixed server.
+
+### Round-Robin (Nginx default, no directive needed)
+Cycles through the server list in strict order: 1, 2, 3, 1, 2, 3...
+
+REAL INCIDENT/LESSON: first test (6 requests fired near-instantly via
+a tight for loop) showed a seemingly broken pattern (5001, 5001, 5002,
+5003, 5001, 5002) - NOT actually broken. All 6 requests shared the
+IDENTICAL timestamp (fired in the same second), meaning the test
+itself was too fast to observe true cycling order due to
+logging/buffering timing artifacts. Re-tested with `sleep 1` between
+each request - produced a clean, perfect repeating cycle (5003, 5001,
+5002, 5003, 5001, 5002). Lesson: evidence that looks wrong does not
+always mean the system is broken - sometimes it means the TEST METHOD
+is too imprecise to observe the real behavior correctly.
+
+### Least-Connections (least_conn directive)
+Tracks ACTIVE, in-progress connections per backend and routes new
+requests to whichever backend currently has the FEWEST - unlike
+round-robin's blind cycling, which gives every server an equal COUNT
+of requests but not necessarily equal ACTUAL LOAD (a server stuck on
+one slow request still gets new requests forced onto it under
+round-robin).
+
+Correctly identified before testing that least_conn's effect is
+INVISIBLE with fast, near-identical response times - the difference
+only appears when connection durations vary meaningfully.
+
+Proved with real evidence: deliberately made port 5001 artificially
+slow (3 second delay) via a modified app_slow.py. Fired 9 PARALLEL
+requests (curl ... & for backgrounding, not sequential). Result:
+5002 got 4 requests, 5003 got 3 requests, port 5001 (the slow one)
+got only 2 - and those 2 requests on port 5001 were clearly delayed
+(timestamped 3 full seconds after all others completed), proving
+least_conn correctly avoided piling more traffic onto the already-busy
+slow server.
+
+### IP-Hash (ip_hash directive) - Sticky Sessions
+Real-world problem this solves: an app storing session data (e.g.
+shopping cart) IN MEMORY on a specific backend instance, not in a
+shared database. If round-robin bounces a user's second request to a
+DIFFERENT backend than their first, that new backend has never seen
+their session data - appears as data loss/inconsistent state to the
+user (e.g. their cart appears empty).
+
+ip_hash fixes this by hashing the VISITOR'S SOURCE IP through a hash
+function to consistently select the SAME backend for that IP every
+time - "sticky sessions." Note: which specific server a given IP
+hashes to is effectively arbitrary/unpredictable by inspection - the
+only guaranteed property is CONSISTENCY (same IP always gets same
+server), not any particular intuitive mapping.
+
+Proved with real evidence: 5 sequential requests from the same source
+IP all landed on port 5003 every single time, with zero variation -
+confirmed genuine stickiness.
+
+### Real Incident: Background Flask Processes Died Silently
+While testing ip_hash, all 5 requests returned 502 Bad Gateway.
+Diagnosed using an extended version of the 3-gate model: a 502
+specifically means NGINX ITSELF responded successfully (ruling out
+Security Group/ufw/Nginx crash) but Nginx's attempt to reach ITS
+backend failed - meaning the problem was one layer deeper than the
+3-gate model's Gate 3, specifically inside what Gate 3 was supposed to
+reach.
+
+Investigated with real commands rather than assuming: `ss -tuln` and
+`ps aux | grep app_slow` both confirmed ALL THREE backend instances
+were dead - none were listening, no processes existed. Root cause:
+background processes started with `&` are tied to the shell session
+that launched them; the session had ended in the meantime (terminal
+behavior, similar risk category to any long-running background job
+without nohup/screen/tmux), killing all 3 Flask processes along with
+it.
+
+Fixed by restarting all 3 instances fresh, re-verified with ss -tuln
+before retesting - real proof followed immediately (consistent 5003
+responses for ip_hash).
+
+### Automatic Failover with ip_hash
+Killed ONLY port 5003 (the instance the current IP was hashed to)
+while leaving 5001 and 5002 alive. Verified dead via ss -tuln (no
+output for port 5003). Re-tested: Nginx CORRECTLY detected the dead
+backend and automatically rerouted to port 5002 - no 502s, no manual
+intervention. ip_hash's stickiness then re-established itself onto
+the new server (5002), consistently, for subsequent requests.
+
+### Why This Matters Going Forward
+The 502 Bad Gateway incident encountered here (backend died, Nginx
+correctly reported it) is a live, unscripted preview of M04-P13
+(dedicated 502 Bad Gateway incident) - already practiced the exact
+diagnostic reasoning needed there. least_conn and ip_hash tradeoffs
+are directly relevant to M04-P16 (Manager Task: reduce latency) and
+system design interview questions about load balancer selection.
+
+### Key Takeaway
+Round-robin = fair by request COUNT, not by actual load. Least-conn =
+fair by actual current load, requires varying request durations to
+matter. IP-hash = sacrifices load-balancing fairness entirely in favor
+of session consistency for a given visitor. Nginx automatically
+detects and routes around dead backends regardless of which algorithm
+is active. Evidence that looks wrong should be investigated for test
+methodology issues before assuming the system itself is broken.
