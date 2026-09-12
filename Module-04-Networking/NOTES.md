@@ -611,3 +611,112 @@ which can occasionally cause rule conflicts in real environments.
 ufw = high-level abstraction. iptables = low-level engine actually
 enforcing the rules. ufw generates real iptables rules automatically;
 it does not replace iptables or work independently of it.
+
+## M04-P08 - SSH Deep-Dive (Keys, Agent Forwarding, Config File, Troubleshooting)
+
+### Public/Private Key Pairs - Why Two Keys Instead of One Shared Secret
+Private key: stays only on your laptop, NEVER shared or uploaded
+anywhere. Public key: safe to copy to any number of servers -
+mathematically useless to an attacker without the matching private key
+(asymmetric cryptography - cannot reverse a public key to derive the
+private key).
+
+CORRECTION made during this session: initially assumed that if one
+server using a shared key pair gets compromised, all other servers
+using the same key pair become vulnerable too. This is WRONG for the
+realistic case. What a compromised server actually exposes is only
+what it stores - the PUBLIC key sitting in ~/.ssh/authorized_keys.
+Since a public key cannot be reverse-engineered into the private key,
+compromising Server A gives an attacker nothing usable against Server
+B, C, D, E, even if they all trust the identical key pair.
+
+The ONLY real danger: the private key FILE ITSELF (the .pem on your
+laptop) being stolen (e.g. malware, or accidentally committing it to a
+public repo) - that is a completely separate event from any individual
+server being hacked, and is genuinely the one thing that would
+compromise every server using that key pair simultaneously.
+
+Verified live: cat ~/.ssh/authorized_keys on the EC2 showed only the
+public key (labeled "devops-blackbelt-lab-key", matching STATUS.md) -
+confirmed safe to expose/paste anywhere, proving the concept directly.
+
+### SSH Config File / MobaXterm Saved Sessions - Convenience, Not IP-Stability
+~/.ssh/config (Linux/WSL/Git Bash) or MobaXterm's saved sessions (GUI)
+both let you save a shortcut (key path + username + host) instead of
+typing the full ssh -i ... command every time.
+
+LIMITATION identified: neither solves the fact that this EC2's public
+IP changes every time it's stopped/started (per STATUS.md) - the saved
+HostName/Remote host field must still be manually updated each time.
+Real production fix for this specific problem: an AWS Elastic IP
+(static, unchanging) - out of scope for this networking module,
+belongs to Module 05 (AWS).
+
+### SSH Agent Forwarding - Real Investigation (assumption corrected)
+Real use case: SSH from laptop into Server A, then from INSIDE Server
+A, SSH into a second Server B - using the LAPTOP's private key,
+without ever copying that key onto Server A's disk.
+
+Initial incorrect assumption: assumed this must be how Git push to
+GitHub worked from the EC2 in Module 02. INVESTIGATED rather than
+accepted the assumption:
+- ls -la ~/.ssh/ on EC2 showed only authorized_keys and known_hosts -
+  NO private key file exists on this EC2 (rules out a separate
+  EC2-generated key pair)
+- echo $SSH_AUTH_SOCK returned empty, and ssh-add -l returned "Could
+  not open a connection to your authentication agent" - agent
+  forwarding is NOT currently active in this session
+- git remote -v showed origin as https://github.com/... , NOT
+  git@github.com:... (SSH) - CONFIRMED: Git authentication has never
+  used SSH keys at all. It uses HTTPS with a Personal Access Token /
+  cached credential helper - a completely separate auth mechanism.
+
+Lesson: agent forwarding was never actually used in this setup. The
+initial assumption was disproven with real command evidence rather
+than accepted at face value - exactly the "verify, don't assume"
+discipline this workbook is built around, applied here to catch an
+incorrect premise in the teaching itself, not just an answer.
+
+Checked MobaXterm's session settings: agent forwarding is not exposed
+in the main Advanced SSH settings tab (X11-Forwarding is a DIFFERENT,
+unrelated feature - forwards GUI apps, not SSH keys) - it lives inside
+the "Expert SSH settings" button, and was never enabled, consistent
+with all the command-line evidence above.
+
+### Troubleshooting SSH Connection Failures - Applying the 3-Gate Model
+Symptom: ssh: connect to host <ip> port 22: Connection timed out
+
+Applying the P07 3-gate model: timeout = Gate 1 (Security Group) issue,
+by definition - the request never reached the instance's OS at all.
+
+Generalization identified: timeout does not reveal WHICH specific
+Security Group problem exists - it could be (a) no inbound rule for
+port 22 at all, (b) a rule exists but restricted to a specific IP/CIDR
+range that no longer matches the current connecting IP (common real
+scenario: dynamic ISP-assigned home IP changes over time), or (c) SG
+somehow detached from the instance. All three produce the IDENTICAL
+timeout symptom - the Security Group doesn't distinguish "no rule" from
+"rule exists but doesn't match you." Determining which of the three
+requires actually checking the AWS console directly; the symptom alone
+only narrows it to "something about the Security Group," not to a
+specific cause.
+
+### Why This Matters Going Forward
+This exact SG-IP-mismatch scenario (timeout despite previously-working
+SSH) is a strong candidate root cause for M04-P12 (SSH connection
+incident) later in this module - a genuinely common real-world trigger
+that has nothing to do with the key pair or the instance itself being
+broken.
+
+### Key Takeaway
+Public/private key security relies on asymmetric cryptography - a
+compromised server only exposes the public key, which is harmless
+without the private key; only the private key FILE itself must be
+protected. Config file/saved-session shortcuts solve typing convenience,
+not IP volatility - that needs an Elastic IP. Agent forwarding relays
+a laptop's key through an intermediate server for further SSH hops,
+but is a DIFFERENT mechanism from HTTPS-based Git authentication - the
+two should not be assumed to be the same "it must have used my key
+somehow" explanation. Timeout during SSH always implicates the
+Security Group layer, but the specific cause among several
+possibilities requires direct verification, not assumption.
