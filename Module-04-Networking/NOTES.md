@@ -851,3 +851,158 @@ of session consistency for a given visitor. Nginx automatically
 detects and routes around dead backends regardless of which algorithm
 is active. Evidence that looks wrong should be investigated for test
 methodology issues before assuming the system itself is broken.
+
+## M04-P10 - TLS/SSL Fundamentals (Self-Signed Cert, HTTPS Termination at Nginx)
+
+### Why HTTPS/TLS Exists
+Plain HTTP sends everything (headers, form data, passwords) as
+READABLE PLAIN TEXT - directly provable with tcpdump (P05), same tool
+that showed the SSH banner. Anyone with network access along the path
+can capture and read it. TLS encrypts the actual content so captured
+packets are unreadable garbage without the correct key.
+
+### Why Part of Every Secure Handshake Is Unavoidably Plain Text
+Two sides must first AGREE on how to encrypt (algorithm, protocol
+version) before any encryption can begin - this negotiation step
+cannot itself be encrypted (chicken-and-egg problem). Directly
+observed in P05's SSH capture: the "SSH-2.0-OpenSSH..." banner was
+plain text because it happens BEFORE encryption is established;
+everything after (actual commands) is encrypted. TLS has an
+equivalent unavoidably-visible negotiation step.
+
+### Why TLS Uses BOTH Asymmetric AND Symmetric Encryption
+Asymmetric (like SSH's key pairs, P08) is mathematically expensive/
+slow - fine for a one-time handshake, too slow for continuous bulk
+data transfer. Symmetric uses one shared key, fast, but requires BOTH
+sides to safely have the same secret without an eavesdropper
+capturing it in transit.
+
+The actual mechanism: client encrypts a symmetric key using the
+SERVER'S PUBLIC key. Only the server's PRIVATE key can decrypt it
+(same asymmetric guarantee as SSH - cannot reverse public into
+private). An eavesdropper capturing this exchange sees only scrambled
+data and CANNOT extract the symmetric key without the private key.
+Once safely exchanged, both sides switch to fast symmetric encryption
+for the rest of the session.
+
+CONFIRMED with real evidence via curl -v handshake output:
+"SSL connection using TLSv1.3 / TLS_AES_256_GCM_SHA384 /
+X25519MLKEM768 / RSASSA-PSS"
+- RSASSA-PSS = asymmetric (RSA), used briefly for identity/handshake
+- X25519MLKEM768 = key exchange mechanism (includes a post-quantum-
+  resistant component)
+- TLS_AES_256_GCM_SHA384 = symmetric cipher (AES) used for the actual
+  HTTP response that followed
+
+### Generating a Self-Signed Certificate
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout /etc/nginx/ssl/selfsigned.key \
+  -out /etc/nginx/ssl/selfsigned.crt \
+  -subj "/CN=<ec2-public-ip>"
+
+Verified file permissions automatically enforced by OpenSSL:
+selfsigned.crt (public) = -rw-r--r-- (world-readable)
+selfsigned.key (private) = -rw------- (root only)
+Same protective principle as SSH private key files - enforced
+automatically at the OS permission level.
+
+### Nginx HTTPS Termination Config
+Added a SECOND server block (listen 443 ssl) alongside the existing
+port 80 block, both pointing to the SAME upstream flask_backend:
+
+server {
+    listen 443 ssl;
+    server_name _;
+    ssl_certificate /etc/nginx/ssl/selfsigned.crt;
+    ssl_certificate_key /etc/nginx/ssl/selfsigned.key;
+    location / {
+        proxy_pass http://flask_backend;
+        ...
+    }
+}
+
+### "HTTPS Termination at Nginx" - What It Actually Means
+Nginx is where the encrypted (HTTPS) conversation ENDS - it decrypts
+incoming traffic, then forwards the request to Flask over PLAIN HTTP
+via loopback (127.0.0.1). This is correct and safe because loopback
+traffic never leaves the machine - there is no network segment for an
+attacker to intercept, unlike the public internet hop between the
+visitor and Nginx. Encryption protects data crossing physically
+separate machines/networks; it is not needed for same-machine
+loopback communication. (Note: in real multi-server production
+setups, some environments DO encrypt internal hops too - e.g. mutual
+TLS in a service mesh, relevant to Module 06's Istio coverage - but
+not needed here since Nginx and Flask share one machine.)
+
+### New Port Requires BOTH Gates Updated (3-gate model applied)
+Port 443 required explicit rules in BOTH layers, neither automatic:
+- Security Group (AWS console) - added HTTPS/443 inbound rule
+- ufw (OS firewall) - sudo ufw allow 443/tcp (confirmed via ufw
+  status verbose showing 443/tcp ALLOW IN)
+Nginx listening on a new port does not automatically grant access
+through either outer gate - both had to be explicitly configured,
+consistent with the P07 3-gate model.
+
+### -k / --insecure Flag
+Without -k, curl treats an unverifiable (self-signed) certificate as
+a HARD FAILURE, refusing to connect - not just a warning. This is
+deliberate: curl cannot distinguish "my own test certificate" from
+"an attacker's fake certificate" (man-in-the-middle attack). -k tells
+curl to proceed anyway despite failed verification - appropriate only
+when the certificate is KNOWN and trusted by the user directly (own
+lab/test environment), never against an unknown production site.
+
+### Self-Signed vs CA-Signed - The Real Distinction
+Verified via curl -v output: subject: CN=<ip> and issuer: CN=<ip> are
+IDENTICAL - the literal definition of "self-signed": the certificate
+vouches for itself rather than being vouched for by an independent,
+trusted Certificate Authority (CA).
+
+CRITICAL DISTINCTION - TLS solves TWO separate problems, not one:
+1. ENCRYPTION (privacy) - self-signed certs handle this completely
+   fine, PROVEN by real evidence (TLS_AES_256_GCM_SHA384 genuinely
+   negotiated and used for this session)
+2. IDENTITY VERIFICATION (authenticity - "am I really talking to the
+   real server, not an impostor?") - self-signed certs provide ZERO
+   protection here, since ANYONE can self-sign a certificate claiming
+   to be ANY domain
+
+Real-world attack self-signed certs cannot prevent: an attacker
+intercepting a connection (e.g. on public WiFi) can generate their
+OWN self-signed certificate impersonating a real site (e.g.
+yourbank.com). If browsers trusted any self-signed cert silently, the
+victim would have a perfectly ENCRYPTED connection directly to the
+attacker - encryption alone is not enough without verified identity.
+A real CA only issues a certificate for a domain after verifying the
+requester genuinely controls it, which is what browsers actually
+check for and warn about when missing.
+
+### Why Self-Signed Is Acceptable Here Specifically
+The identity-verification threat model only matters when there is an
+untrusted public audience who needs reassurance they are reaching the
+real server, not an impostor. For this lab EC2, the only person
+connecting is the person who built it and already knows/controls both
+ends - there is no one else to trick. Self-signed is standard,
+accepted practice for internal tools, local development, and lab/test
+environments; CA-signed certificates (e.g. via free automated services
+like Let's Encrypt) are required once real, untrusted public visitors
+are involved - directly relevant to M04-P17/P18 (Manager Task: set up
+HTTPS before launch) later in this module.
+
+### Why This Matters Going Forward
+The encryption-vs-identity-verification distinction is a strong,
+precise interview answer for "why does HTTPS show a warning for
+self-signed certificates." HTTPS termination at Nginx is the standard
+pattern used again in Module 06 (Kubernetes Ingress) and will reappear
+directly in M04-P17 (Manager Task: HTTPS before launch), this time
+with a real, CA-signed approach.
+
+### Key Takeaway
+TLS solves encryption (privacy) AND identity verification (authenticity)
+- self-signed certificates provide only the first, which is why
+browsers warn on them; CA-signed certificates are required once real,
+untrusted visitors are involved. HTTPS termination at Nginx means
+Nginx decrypts external traffic and forwards plain HTTP internally
+over loopback, which is safe since that hop never leaves the machine.
+New ports always require updates to BOTH the Security Group and ufw,
+independently - neither is automatic just because Nginx is listening.
