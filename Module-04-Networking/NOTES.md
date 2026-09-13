@@ -1006,3 +1006,103 @@ Nginx decrypts external traffic and forwards plain HTTP internally
 over loopback, which is safe since that hop never leaves the machine.
 New ports always require updates to BOTH the Security Group and ufw,
 independently - neither is automatic just because Nginx is listening.
+
+## M04-P11 - Debug Challenge: Broken Nginx Config
+
+### Real Incident: Debug Challenge Accidentally Overwrote Live Config
+The debug challenge was initially set up by editing the REAL, live
+/etc/nginx/sites-available/flask-proxy directly - overwriting the
+working P09/P10 config with the deliberately-broken challenge config.
+CORRECTED by creating a separate, isolated file
+(networking-lab/broken-nginx-challenge.conf) for the debug exercise
+instead, leaving the live config untouched. Lesson: debug/practice
+exercises should always use throwaway files, never overwrite a known-
+working live config directly.
+
+### Real Incident (recurring): Background Flask Processes Died Again
+While verifying the live config was intact, curl returned 502 Bad
+Gateway despite nginx -t passing. Investigated with ss -tuln and
+ps aux (same method as P09) - confirmed all 3 Flask instances
+(5001/5002/5003) were dead again, same root cause as P09: processes
+started with `&` are tied to the shell session and die when it ends.
+
+FIXED PROPERLY this time using nohup instead of just `&`:
+nohup python3 app.py 5001 > /tmp/flask-5001.log 2>&1 &
+nohup and output redirection allow the process to survive even after
+the terminal session/SSH connection that started it ends - solving
+the ROOT CAUSE of this recurring incident rather than just restarting
+the same fragile way a third time.
+
+### Bugs Found by Careful Reading Alone (before running nginx -t)
+Applied the pattern "every Nginx directive line must end in a
+semicolon" mechanically across the whole file:
+
+Bug #1: Missing semicolon - `server 127.0.0.1:5000` (upstream block)
+Bug #2: Missing semicolon - `access_log off` (/health location)
+Bug #3: Missing semicolon - `ssl_certificate_key ...selfsigned.key`
+Bug #4: Missing semicolon - `proxy_pass http://flask_backend`
+        (HTTPS server block, / location)
+
+All 4 are pure syntax errors - confirmed nginx -t failed before
+fixing them, and passed cleanly ("syntax is ok", "test is successful")
+immediately after fixing all 4, with no further syntax issues
+revealed - proving the manual read-through was thorough and accurate.
+
+### Bugs Found Only by Testing Actual Behavior (nginx -t passed, still wrong)
+
+Bug #5: upstream flask_backend pointed to port 5000 - NO Flask
+instance has run on port 5000 since P09 (real instances are on
+5001/5002/5003). Verified via ss -tuln | grep 5000 returning BLANK
+(no listener). This is syntactically perfect but functionally wrong -
+same "valid but wrong" category as the &host bug from P06. Impact:
+every single request through this config would return 502 Bad
+Gateway, since Nginx has nothing valid to actually forward to.
+
+Bug #6: The /health location block correctly configures ROUTING and
+LOGGING (access_log off) at the Nginx level, but Flask itself (per
+app.py, verified via cat) has NO /health route defined - only /.
+Nginx forwarding a request to a route Flask doesn't recognize does
+NOT produce "refused" or "timeout" - CORRECTED assumption during this
+exercise: Flask is alive and responds normally, just with a 404 Not
+Found, which is a fully successful network transaction at the
+connectivity level (all 3 gates from P07 worked correctly) - 404 is
+an APPLICATION-level outcome, not a connectivity failure.
+
+Testing note: Bug #5 initially MASKED Bug #6 - since the broken
+upstream port affected ALL routes equally, testing /health returned
+502 (Bug #5's symptom) rather than clearly revealing the missing-route
+issue underneath. Had to fix Bug #5 first, then re-test /health in
+isolation to properly confirm Bug #6 as a genuinely separate issue.
+Lesson: bugs can mask each other - fix and re-verify one at a time,
+don't assume a single test result means only one thing is wrong.
+
+### Requirement Check: HTTP to HTTPS Redirect
+location / {
+    return 301 https://$host$request_uri;
+}
+This logic is actually CORRECT as written - a 301 permanent redirect
+using the request's own host and original URI, correctly upgrading
+any HTTP request to HTTPS. No bug found here after review - a good
+reminder that not every block in a "broken config" exercise is
+necessarily broken; some correctly-written blocks should be
+recognized and left alone rather than needlessly "fixed."
+
+### Why This Matters Going Forward
+This exercise combined syntax errors (caught mechanically via the
+semicolon pattern + nginx -t) with logic errors (caught only via
+actual behavioral testing) - directly mirroring the real incident
+categories coming up in M04-P12 (SSH) and M04-P13 (502 Bad Gateway).
+The masking-bugs lesson (Bug #5 hiding Bug #6) is directly relevant to
+real production debugging, where multiple simultaneous issues are
+common and testing one fix at a time is the only reliable way to
+isolate each one.
+
+### Key Takeaway
+nginx -t only validates syntax, never behavior - passing it is a
+necessary but not sufficient condition for a config being correct.
+Systematic reading (checking for a consistent pattern like missing
+semicolons) can catch real bugs before ever running a tool. Logic
+bugs require testing actual behavior against the STATED INTENT (what
+the teammate said they wanted), not just what the config appears to
+do at a glance. Bugs can mask each other - always re-test after each
+individual fix, not just once at the end.
