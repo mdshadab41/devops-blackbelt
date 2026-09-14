@@ -1244,3 +1244,72 @@ the application or OS layers. AWS Security Group misconfigurations
 produce ZERO error logs on the instance itself, since the traffic
 never arrives - the only way to catch them is through this local-vs-
 external comparison test, not by reading application logs.
+
+## M04-P13 - Incident: SSH Connection Refused/Timeout - Diagnosing Across 3 Layers
+
+### Safety Note (real decision made this session)
+Originally planned to deliberately block SSH at both Security Group
+AND ufw simultaneously to practice diagnosis hands-on. DECIDED AGAINST
+this due to genuine lockout risk if anything went wrong mid-exercise
+(would require AWS Session Manager/Serial Console to recover, per the
+P08 warning). Worked through the diagnostic reasoning via structured
+scenarios instead, without risking the live, working session. Real
+lesson: recognizing when a "hands-on" exercise carries disproportionate
+risk relative to its learning value, and choosing a safer method to
+get the same understanding, is itself a valid engineering judgment
+call - not every concept needs to be broken live to be learned properly.
+
+### Scenario 1: "Connection timed out"
+Per the P07 3-gate model, timeout can ONLY happen at Gate 1 (Security
+Group) - this single symptom immediately rules out ufw (Gate 2) and
+the SSH service itself (Gate 3) entirely, since both of those would
+produce "refused," not silence. Diagnostic action: go straight to the
+AWS Security Group console, no need to check ufw or sshd status at
+all. (Concretely diagnosed and fixed for HTTP/HTTPS in M04-P12 - same
+model applies identically to SSH/port 22.)
+
+### Scenario 2: "Connection refused"
+Refused rules OUT Gate 1 (Security Group let it through) - the
+problem is Gate 2 (ufw) or Gate 3 (sshd itself). Correct diagnostic
+order, using the MOST SPECIFIC/DECISIVE check first:
+
+1. ss -tuln | grep :22 - checks Gate 3 directly (is sshd even running
+   and listening at all)
+   - If NOTHING shows: sshd itself is not running - this IS the root
+     cause. Checking ufw at this point is WASTED EFFORT, because there
+     is no destination for traffic to reach regardless of firewall
+     rules - the problem is already fully identified. Fix: restart
+     sshd (sudo systemctl restart ssh), not touch ufw at all.
+   - If sshd IS shown listening, but "refused" still occurs: THEN
+     check ufw status verbose - this narrows it specifically to Gate 2
+     (ufw actively blocking, despite the app being alive).
+
+### General Diagnostic Principle (identified this session)
+Always check from the MOST SPECIFIC, MOST DECISIVE layer first when
+multiple layers could explain the same symptom - a single check
+(ss -tuln) can sometimes make an entire OTHER category of
+investigation (ufw rules) irrelevant, by confirming the failure
+happened at a completely different, more fundamental level first.
+Checking things in the wrong order wastes time investigating a layer
+that was never actually the problem.
+
+### Complete 3-Layer SSH Diagnostic Summary (this problem's core deliverable)
+| Symptom  | Gate Responsible      | First Diagnostic Command          |
+|----------|----------------------|-------------------------------------|
+| Timeout  | Gate 1 (Security Group) | Check AWS console directly (no local command can diagnose this - it never reaches the instance) |
+| Refused, nothing listening | Gate 3 (sshd itself) | ss -tuln \| grep :22 - shows nothing |
+| Refused, something IS listening | Gate 2 (ufw)  | sudo ufw status verbose - shows a deny/no-allow rule |
+
+### Why This Matters Going Forward
+This exact 3-row diagnostic table generalizes to EVERY service in this
+module, not just SSH - the same logic applies identically to Nginx
+(port 80/443), Flask, or any future service in later modules (Jenkins,
+Kubernetes NodePorts, etc.). This is a strong, structured interview
+answer for "walk me through how you'd debug a connection failure."
+
+### Key Takeaway
+Timeout vs refused immediately narrows a connection failure to either
+Gate 1 alone, or Gates 2/3 - and for refused specifically, checking
+"is anything even listening" (ss -tuln) BEFORE checking firewall rules
+(ufw) is the more efficient, more decisive diagnostic order, since a
+dead service makes firewall rules irrelevant to check at all.
