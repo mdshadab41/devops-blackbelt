@@ -1165,3 +1165,82 @@ investigating an unexplained "everything that was running is now
 dead" scenario - a machine reboot is a distinct root cause from a
 session ending, even though both can produce the identical symptom
 (background processes gone).
+
+## M04-P12 - Incident: "Site Is Down" - Security Group Misconfiguration
+
+### RCA Report
+
+**Problem:** Site completely unreachable from external customers/
+browsers. Reported via teammate message: "hangs and eventually times
+out," confirmed independently by a customer complaint on social media.
+
+**Impact:** Complete external outage - no customer could reach the
+site via HTTP. Internal/local access (from the EC2 itself) was
+unaffected, meaning the application layer itself was never at risk -
+this was purely a network-boundary issue.
+
+**Timeline:**
+- Teammate reports site down, describes symptom as "hangs then times
+  out" (a specific, diagnostically useful detail, not just "it's down")
+- Diagnosed locally first: curl http://127.0.0.1 from the EC2 itself
+  SUCCEEDED - confirmed Nginx and Flask backend both healthy
+- Diagnosed externally: curl/browser from an actual separate laptop
+  to the public IP TIMED OUT - confirmed matching the reported symptom
+- Applied the P07 3-gate model: local success + external timeout can
+  ONLY mean a Gate 1 (Security Group) issue - Gates 2/3 would produce
+  "refused," not timeout, and were already ruled out by the successful
+  local test
+- Verified directly in AWS Console: Security Group inbound rules had
+  NO rule for port 80 at all
+- Added inbound rule: HTTP, port 80, source 0.0.0.0/0
+- Re-verified from the same external laptop: request succeeded,
+  received the real Flask response
+
+**Root Cause:** The Security Group's inbound rules did not include
+port 80 at all. Without an explicit allow rule, AWS's default-deny
+behavior silently dropped every external request at the network
+boundary, before it ever reached the EC2 instance's OS - producing a
+timeout, not a refused connection, consistent with the P07 model.
+
+**Resolution:** Added an inbound rule to the Security Group allowing
+HTTP (port 80) from anywhere (0.0.0.0/0), matching the same
+configuration originally set up in P06.
+
+**Preventive Action:** Security Group changes are high-impact and
+should be reviewed/audited before/after any infrastructure cleanup
+work, since a single accidental rule removal causes a complete,
+silent outage with no error logged anywhere on the instance itself
+(Nginx and Flask logs showed nothing wrong, because they never even
+received the requests). Consider documenting required Security Group
+rules explicitly (e.g. in this very NOTES.md or a dedicated
+infrastructure-as-code file) so a misconfiguration can be quickly
+diffed against a known-good baseline instead of manually reasoned
+about live.
+
+**Lessons Learned:** The diagnostic value of TESTING FROM TWO VANTAGE
+POINTS (local vs external) cannot be overstated - it immediately
+isolates whether a problem is Security-Group-level (only external
+fails) versus application/OS-level (both local and external fail).
+This single comparison collapsed the entire 3-gate model into one
+clear answer without needing to check ufw or Nginx/Flask logs at all.
+Also reinforced: a customer/teammate's exact WORDING of a symptom
+("hangs then times out" vs "immediately says connection refused") is
+real diagnostic information, not just noise - it should be captured
+and used, not glossed over, before starting investigation.
+
+### Why This Matters Going Forward
+This is the canonical real-world pattern for the ENTIRE 3-gate model
+built across P07-P11: local success + external timeout = Security
+Group, every time, with no exceptions, as long as ufw/app-level issues
+have been ruled out via the local test first. This exact diagnostic
+sequence (local test -> external test -> compare -> conclude which
+gate) is a strong, reusable interview answer for "how would you debug
+a site that's down."
+
+### Key Takeaway
+A local curl success + an external timeout is definitive evidence of
+a Security-Group-level problem, requiring no further investigation of
+the application or OS layers. AWS Security Group misconfigurations
+produce ZERO error logs on the instance itself, since the traffic
+never arrives - the only way to catch them is through this local-vs-
+external comparison test, not by reading application logs.
