@@ -1313,3 +1313,121 @@ Gate 1 alone, or Gates 2/3 - and for refused specifically, checking
 "is anything even listening" (ss -tuln) BEFORE checking firewall rules
 (ufw) is the more efficient, more decisive diagnostic order, since a
 dead service makes firewall rules irrelevant to check at all.
+
+## M04-P14 - Incident: Nginx 502 Bad Gateway - Upstream App Crashed
+
+### RCA Report
+
+**Problem:** Customers report intermittent 502 Bad Gateway errors -
+"sometimes it works, sometimes it doesn't, seems random."
+
+**Impact:** Partial, inconsistent service degradation - unlike P12
+(total outage) or P13 (SSH access), this scenario specifically
+explores PARTIAL failure across a load-balanced backend pool, where
+some requests succeed and others fail depending on routing.
+
+**Investigation Timeline (built from first principles, with real
+testing at each stage):**
+
+1. Built a deliberately buggy route (ZeroDivisionError, unhandled
+   exception) - tested directly against Flask (bypassing Nginx) and
+   discovered a CORRECTED assumption: an unhandled exception in ONE
+   route does NOT crash the entire Flask process. Flask's dev server
+   catches it per-request and returns a 500 Internal Server Error,
+   while the process itself keeps running normally for all other
+   requests (proven live: curl to / succeeded immediately after
+   triggering the crash on /divide).
+
+2. Realized this meant a per-request exception can NEVER produce a
+   real 502 - only a 500, since the process never actually dies. A
+   502 specifically requires the ENTIRE backend process to become
+   unreachable (crashed/hung), not just one bad request being caught
+   and wrapped into an error response.
+
+3. Built a genuinely process-killing route using os._exit(1) - bypasses
+   Flask's exception handling entirely (OS-level immediate termination,
+   no chance to generate any response). Verified directly: curl to
+   this route returned NO response at all, curl exit code 7 ("failed
+   to connect"), and ss -tuln confirmed the port had zero listener
+   immediately after - genuine, complete process death.
+
+4. Tested this dead backend through Nginx (round-robin across 3
+   backends, one now dead). PREDICTED a mix of 200s and 502s.
+   ACTUAL REAL RESULT: all 200s, ZERO 502s across 6 requests -
+   prediction was WRONG, investigated rather than dismissed.
+
+5. Root cause of the surprising result: NGINX HAS BUILT-IN PASSIVE
+   HEALTH CHECKING. The first time Nginx tries to reach a backend and
+   fails, it automatically marks that backend temporarily unavailable
+   and stops routing new traffic to it, retrying later. This is the
+   SAME mechanism already proven in P09's ip_hash failover test
+   (killing port 5003 there) - applied here to round-robin instead.
+   A 502 would only be visible for the very first request(s) that
+   happen to hit the backend right at the moment it dies - after
+   that, Nginx silently routes around it.
+
+6. Reasoned through the ACTUAL likely cause of genuinely ONGOING,
+   intermittent 502s (not just a one-time dead backend, which
+   self-heals into consistent success as shown above): a backend
+   stuck in a CRASH LOOP - repeatedly restarting, briefly appearing
+   healthy again (Nginx re-marks it available), receiving new traffic,
+   crashing again. This produces a genuinely unpredictable, "sometimes
+   works sometimes doesn't" pattern from the outside, unlike a single
+   permanently-dead backend. Directly connects to "CrashLoopBackOff,"
+   a named production incident type in STATUS.md, to be revisited
+   formally in Module 06 (Kubernetes).
+
+**Root Cause (of the ORIGINAL scenario, as diagnosed):** Intermittent
+502s are best explained by a backend in a crash-loop cycle, not a
+single permanently dead instance - Nginx's automatic health checking
+means a truly dead backend quickly stops causing visible errors at all,
+while a repeatedly-crashing-and-restarting backend continues producing
+sporadic failures indefinitely as it cycles between healthy and dead.
+
+**Resolution (in this lab):** Restored the healthy, non-crashing
+app.py on all 3 ports, re-enabled ip_hash. Real production resolution
+for a genuine crash loop would require investigating and fixing the
+underlying application bug causing the repeated crashes - Nginx-level
+failover only masks the symptom, it doesn't fix the actual defect.
+
+**Preventive Action:** Application-level error handling (500) is not a
+substitute for process-level resilience against catastrophic failures
+(502) - both categories of failure need separate handling: catch
+exceptions gracefully within routes where possible (preventing 500s
+from being confusing/unhelpful), AND ensure a process supervisor
+(systemd, Docker restart policies, or Kubernetes) automatically
+restarts genuinely crashed processes, converting "permanently down"
+into "briefly down, then healthy again."
+
+**Lessons Learned:** A wrong prediction, when investigated rather than
+dismissed, revealed a genuinely important and previously-undocumented
+mechanism (Nginx's passive health checking) that directly explains
+real production behavior. The specific WORDING of a reported symptom
+("intermittent," "seems random") is itself diagnostic evidence -
+intermittent failures with automatic failover in place point toward a
+cycling/crash-looping root cause rather than a simple one-time failure.
+
+### Key Distinction: 500 vs 502 (core lesson of this problem)
+- 500 = the backend IS alive, received the request, but its own code
+  threw an error it could still respond about (an error PAGE)
+- 502 = Nginx got NO valid response from the backend at all - the
+  backend is unreachable/crashed/hung (no page possible)
+An unhandled exception inside a single route handler can only ever
+produce a 500 in a properly running web server - achieving a real 502
+requires the entire backend PROCESS to become unreachable, not just
+one request's logic failing.
+
+### Why This Matters Going Forward
+Nginx's passive health checking (proven here AND in P09) is directly
+relevant to Kubernetes' liveness/readiness probes (Module 06) and load
+balancer health checks in cloud architecture (Module 05, 15, 21) -
+this lab-proven mechanism is the same underlying concept, just at a
+different layer of the stack.
+
+### Key Takeaway
+502 requires total backend unreachability, not just an application-
+level error - and Nginx automatically and silently routes around dead
+backends the moment it detects a failure, meaning a single dead
+instance self-heals into invisible failures quickly, while genuinely
+ongoing intermittent 502s point to a cycling/crash-loop pattern rather
+than a simple, permanent outage.
