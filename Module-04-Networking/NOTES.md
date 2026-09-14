@@ -1106,3 +1106,62 @@ bugs require testing actual behavior against the STATED INTENT (what
 the teammate said they wanted), not just what the config appears to
 do at a glance. Bugs can mask each other - always re-test after each
 individual fix, not just once at the end.
+
+## M04-P12 - Real Incident (Pre-Exercise): EC2 Reboot Killed nohup Processes
+
+### What Happened
+Before the planned Security Group exercise even began, baseline check
+(curl to both HTTP and HTTPS) returned 502 Bad Gateway. Investigated
+with ss -tuln and ps aux (same method as P09/P11) - confirmed ALL 3
+Flask instances were dead, DESPITE having used nohup specifically to
+prevent this in P11.
+
+### Root Cause - A New Failure Mode, Different From P09/P11
+Checked `uptime` - showed "up 10 min," revealing the EC2 instance
+itself had rebooted (stopped/started) recently. This is a
+DIFFERENT failure mode than the earlier session-ending incidents:
+
+- P09/P11 cause: shell session ended -> `&` background jobs died
+  (nohup WOULD have prevented this)
+- P12 cause: the ENTIRE MACHINE rebooted -> nohup does NOT protect
+  against this, because a full OS reboot wipes ALL running processes
+  from memory regardless of how they were started
+
+CORRECTED UNDERSTANDING: nohup only protects against the shell/SSH
+session ending. It does NOT make a process durable across a full
+machine reboot.
+
+### Confirmed via Contrast with Nginx
+sudo systemctl status nginx showed Nginx WAS already back up and
+running automatically since the reboot, with zero manual
+intervention - because Nginx is registered as a real systemd service
+("Loaded: ... enabled") which automatically starts on every boot, a
+fundamentally more robust mechanism than a manually-run nohup
+background job.
+
+### Fix
+Manually restarted all 3 Flask instances again via nohup (correct
+practice for surviving session disconnects specifically, just not
+full reboots):
+nohup python3 app.py 5001 > /tmp/flask-5001.log 2>&1 &
+(repeated for 5002, 5003)
+
+### Why This Matters Going Forward
+This is direct, real foreshadowing of why production systems never
+rely on manually-run background processes at all - proper process
+supervision (systemd services, or later in this workbook: Docker
+restart policies in Module 03, and Kubernetes' entire self-healing
+design in Module 06) is what actually survives both session endings
+AND full reboots automatically. This is a genuine real-world gap
+between "lab/practice setup" and "production-grade setup," worth
+remembering directly for system design interview questions about
+service resilience.
+
+### Key Takeaway
+nohup solves session-ending, not machine-rebooting. Only a real
+process supervisor (systemd, Docker restart policies, Kubernetes)
+survives a full reboot automatically. Always check `uptime` when
+investigating an unexplained "everything that was running is now
+dead" scenario - a machine reboot is a distinct root cause from a
+session ending, even though both can produce the identical symptom
+(background processes gone).
