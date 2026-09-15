@@ -1521,3 +1521,100 @@ services often intentionally return different valid answers by
 design (load balancing), and this must be distinguished using
 targeted dig @server tests plus known context about the change,
 not surface-level appearance alone.
+
+## M04-P16 - Incident: Intermittent Connection Drops Under Load (File Descriptor Exhaustion)
+
+### File Descriptors vs Inodes (distinction clarified this session)
+Inode: permanent filesystem metadata for a file ON DISK - exists
+independent of any running process.
+File descriptor: a TEMPORARY, per-process reference to anything
+currently open (a file, OR a network socket, OR a pipe) - network
+connections consume file descriptors but have NO inode at all, since
+they are not stored on disk. A process can exhaust its file descriptor
+limit purely from network traffic, with zero relation to disk space or
+inode availability - confirmed these are completely independent
+failure categories.
+
+### Checking Real Limits
+ulimit -n (shell) -> 1024
+cat /proc/<nginx-master-pid>/limits | grep "open files" ->
+Max open files: 1024 (soft limit, currently enforced) / 524288 (hard
+limit, the ceiling Nginx COULD be raised to, but isn't configured to
+use)
+
+### Real Incident: Client (ab) Hit Its Own Limit First
+First load test attempt (ab -n 3000 -c 1500) failed immediately with
+"socket: Too many open files (24)" - but this came from ab itself,
+not Nginx. IMPORTANT LESSON: the load-testing TOOL needs enough of its
+own file descriptor headroom to generate the intended load - if the
+client runs out first, you are testing the client's limits, not the
+server's. Fixed with `ulimit -n 4096` (comfortably above the 1500
+concurrency target, not an arbitrarily huge number) before re-running.
+
+### Real Test Results (genuine evidence, Nginx's real limit exceeded)
+ab -n 3000 -c 1500 http://127.0.0.1/ (after raising ab's own limit):
+Failed requests: 256, Non-2xx responses: 2872
+
+Investigated the non-2xx responses directly rather than trust the
+summary line alone - used -v 2 with grep/sort/uniq to get the real
+breakdown: 2808 out of 2872 were specifically 502 Bad Gateway.
+
+INITIAL WRONG GUESS: assumed these might be 429 Too Many Requests
+(explicit rate limiting) - CORRECTED before even testing, since no
+rate limiting (limit_req) has ever been configured anywhere in this
+module's Nginx setup.
+
+### Root Cause Mechanism (connects directly to P14)
+Nginx needs roughly 2 file descriptors per CONCURRENT (simultaneous)
+request: one for the incoming client connection, one for the outgoing
+connection to the Flask backend. Confirmed via direct example: 15
+simultaneous user requests require ~30 file descriptors (2 per
+request), NOT per total requests served over time - concurrency is
+what consumes file descriptors, not cumulative volume. A server
+handling millions of requests sequentially, one at a time, would
+barely use any file descriptors; a server handling many requests
+AT ONCE is what drives exhaustion.
+
+Under 1500 simultaneous connections in the real test, Nginx's own
+1024 file descriptor limit was exceeded (needed ~3000, had 1024).
+
+CRITICAL DISTINCTION from P14: the 502 mechanism is IDENTICAL (Nginx
+cannot get a response from its backend) - but the ROOT CAUSE is
+different:
+- P14: the backend PROCESS itself was dead/crashed
+- P16: the backend was healthy - NGINX ITSELF was resource-exhausted,
+  unable to even open a new connection to reach a healthy backend
+
+A wave of 502s does not automatically mean the backend crashed - it
+can equally mean the load balancer/proxy itself has run out of
+resources, requiring raising ulimits/tuning the proxy rather than
+restarting the backend application.
+
+### Why "It Went Away Once Traffic Dropped" Makes Sense
+Key diagnostic detail distinguishing this from a P14-style crash loop.
+A crashed backend would not self-resolve just from reduced traffic.
+File descriptor exhaustion is purely a function of CONCURRENT load at
+any given moment - fewer simultaneous connections means Nginx
+immediately has free file descriptors again, with zero code changes
+or restarts needed. How an incident self-resolves is real diagnostic
+evidence of its root cause category.
+
+### Real Fix (Production Context, Not Applied in This Lab)
+Raise Nginx's soft limit toward its hard limit (524288) via systemd
+service overrides (LimitNOFILE=) or worker_rlimit_nofile, matching
+capacity to realistic peak concurrent load rather than the Ubuntu
+default of 1024.
+
+### Why This Matters Going Forward
+Directly relevant to M04-P17 (Manager Task: reduce latency for
+checkout API) and system design interviews about scaling load
+balancers for peak traffic.
+
+### Key Takeaway
+File descriptors are consumed by CONCURRENT connections (roughly 2
+per simultaneous request through a reverse proxy), not cumulative
+request volume. A 502 can come from either a dead backend (P14) or a
+resource-exhausted proxy unable to reach a healthy backend (P16) -
+these require different fixes, and self-resolution as load decreases
+is the signal distinguishing resource exhaustion from an application
+crash.
