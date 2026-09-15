@@ -1618,3 +1618,122 @@ resource-exhausted proxy unable to reach a healthy backend (P16) -
 these require different fixes, and self-resolution as load decreases
 is the signal distinguishing resource exhaustion from an application
 crash.
+
+## M04-P17 - Manager Task: Reduce Latency for Checkout API
+
+### Measuring Latency Properly (Phase Breakdown)
+curl -w with %{time_namelookup}, %{time_connect}, %{time_appconnect},
+%{time_starttransfer}, %{time_total} breaks a request into distinct
+phases (DNS, TCP connect, TLS handshake, time-to-first-byte, total) -
+critical because each phase has a DIFFERENT root cause and fix. A
+single "total time" number cannot distinguish network latency from
+application processing time.
+
+### Real Incident: Loopback Testing Is Meaningless for Customer Latency
+First baseline test used http://127.0.0.1 FROM the EC2 itself - all
+phases under 2ms. CORRECTED: this tells us NOTHING about real customer
+experience, since it never touches the actual internet (no real
+network distance, no real DNS resolution). Re-tested from an actual
+external laptop against the public IP instead - the only test that
+genuinely represents what a customer experiences.
+
+### Real External Measurement
+curl -w test from external laptop to public IP:
+DNS Lookup: 0.000421s | TCP Connect: 0.077673s | TLS Handshake: 0s |
+Time to First Byte: 0.133734s | Total: 0.133946s
+
+Breakdown: ~78ms was real network/geographic distance (mostly outside
+direct control - physics + routing). ~56ms (134ms total - 78ms
+connect) was spent AFTER connection established, before any response
+data arrived - this is actual Nginx+Flask PROCESSING time, and the
+genuinely actionable part of this task.
+
+### Root Cause Identified: Flask's Development Server
+~56ms processing time for a route that just returns a hardcoded
+string is notably slow for such trivial work. Root cause: Flask's
+built-in dev server (Werkzeug) is explicitly NOT designed for
+production performance (per its own startup warning, first seen in
+P06) - it is single-threaded by default, meaning concurrent requests
+QUEUE and wait for the previous one to finish, even if the actual work
+each request does is trivially fast. This affects LATENCY specifically
+(not just capacity) - a request's own work might be instant, but time
+spent waiting in queue behind other requests still counts as latency
+from the customer's perspective.
+
+### Real Incident: sys.argv Conflicts With Gunicorn's Own Arguments
+First attempt to run app.py under Gunicorn (gunicorn --workers 3
+--bind 127.0.0.1:5020 app:app) crashed immediately: ValueError:
+invalid literal for int() with base 10: '--workers'. Root cause:
+app.py's `port = int(sys.argv[1])` pattern assumed direct script
+execution (python3 app.py 5001) - but Gunicorn loads the app as an
+imported WSGI module, and sys.argv reflected GUNICORN's own CLI flags
+instead, not a port number. Real lesson: code written for one
+execution method (direct script + custom CLI args) is not
+automatically compatible with a different execution method (imported
+by a WSGI server) - this is exactly why production apps typically read
+config from environment variables, not sys.argv.
+
+FIXED by adding `.isdigit()` validation before attempting int()
+conversion, falling back to os.environ.get('PORT', 5000) otherwise:
+port = int(sys.argv[1]) if len(sys.argv) > 1 and
+sys.argv[1].isdigit() else int(os.environ.get('PORT', 5000))
+Confirmed the exact mechanism: '--workers'.isdigit() returns False
+(contains non-digit characters), so execution safely falls through to
+the environment-variable default instead of crashing.
+
+### Real Incident: ab Hung Indefinitely Against a Dead Port
+A load-test comparison attempt against port 5001 returned completely
+blank output and had to be manually interrupted (Ctrl+C). Investigated
+via ss -tuln + ps aux rather than retry blindly - confirmed NOTHING
+was listening on port 5001 at all (a leftover from earlier module
+testing). Noteworthy edge case: ab appears to HANG rather than fail
+fast when the target port has no listener, unlike curl's typical
+instant "connection refused" - worth remembering when a load test
+seems to stall with zero output. Fixed by restarting the dev server
+instance properly before re-running the comparison.
+
+### Real, Measured Comparison (the actual deliverable for this task)
+Identical load test (ab -n 300 -c 50) against both servers:
+
+| Server                          | Mean Time Per Request |
+|----------------------------------|------------------------|
+| Flask dev server (single-thread) | 41.544 ms              |
+| Gunicorn (3 workers)             | 15.708 ms              |
+
+RESULT: ~62% reduction in mean request latency under identical
+concurrent load (50 simultaneous connections), achieved purely by
+switching the WSGI server - ZERO application code logic was changed.
+Zero failed requests on either server at this load level (contrast
+with P16, where much higher concurrency, 1500, caused genuine
+failures even on the dev server due to file descriptor exhaustion -
+this test uses a moderate, realistic load specifically to isolate the
+WSGI server difference, not to reproduce total exhaustion).
+
+### Recommendation (Manager-Ready Summary)
+"Checkout API latency was measured end-to-end from an external client,
+not just locally. External network transit accounts for ~78ms
+(largely fixed, tied to customer geographic distance). The remaining,
+actionable ~56ms of processing time is explained by Flask's
+development server being single-threaded, which serializes concurrent
+requests. Switching to Gunicorn with multiple worker processes reduced
+mean request latency by ~62% under identical concurrent load in direct
+testing (41.5ms to 15.7ms), with zero changes to application logic.
+Recommend deploying Gunicorn (or an equivalent production WSGI server)
+behind Nginx for the checkout API specifically, as the single
+highest-impact, lowest-risk change available."
+
+### Why This Matters Going Forward
+This exact dev-server-vs-production-WSGI-server distinction, and the
+external-vs-local measurement discipline, are both standard real
+interview topics for "how would you diagnose and fix API latency."
+The phase-breakdown curl technique is directly reusable for any future
+latency investigation in this workbook or on the job.
+
+### Key Takeaway
+Never measure latency from localhost - it excludes the real network
+path entirely. Break latency into phases (DNS/connect/TLS/processing)
+to target the actual bottleneck instead of guessing. Flask's dev
+server is single-threaded and unsuitable for any real latency-
+sensitive production traffic; a real WSGI server with multiple workers
+directly reduces queuing-induced latency, provable with real, run
+side-by-side measurements rather than assumed.
