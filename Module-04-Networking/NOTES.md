@@ -1431,3 +1431,93 @@ backends the moment it detects a failure, meaning a single dead
 instance self-heals into invisible failures quickly, while genuinely
 ongoing intermittent 502s point to a cycling/crash-loop pattern rather
 than a simple, permanent outage.
+
+## M04-P15 - Incident: DNS Not Resolving - Propagation vs Misconfiguration vs Caching
+
+### The 3 Distinct Root Causes (precise mechanisms, not just "it takes time")
+
+**Caching:** The authoritative source(s) of truth ALREADY have the
+correct, updated answer. The problem is purely that a resolver or
+device somewhere has an OLD, unrefreshed COPY it fetched before the
+change, and its TTL hasn't expired yet (direct continuation of P02).
+
+**Propagation:** The authoritative source(s) of truth THEMSELVES have
+not finished syncing with each other yet. Most domains have MULTIPLE
+authoritative DNS servers (redundancy) - when a record is updated, it
+has to physically replicate across all of them, which takes real time.
+During this window, even a completely FRESH query (zero caching
+involved) can get different, genuinely inconsistent answers, purely
+depending on WHICH specific authoritative server happens to be asked.
+
+**Misconfiguration:** The record itself was entered wrong at the
+source (typo, wrong record type, wrong target). EVERY authoritative
+server, once synced, will consistently agree - just on the WRONG
+answer. Unlike the other two, misconfiguration produces universal,
+consistent failure, not a mix of correct/incorrect depending on who
+asks.
+
+Analogy used: 3 reception desks (NY/London/Tokyo) as authoritative
+servers. Caching = a caller's own outdated sticky note. Propagation =
+the desks themselves not yet having synced their information with
+each other. Misconfiguration = ALL desks correctly agreeing on the
+same, but wrong, information.
+
+### Real Test That Initially Looked Like Propagation, But Wasn't
+dig github.com @8.8.8.8 +short -> 20.207.73.82
+dig github.com @1.1.1.1 +short -> 140.82.114.4
+
+Different resolvers gave DIFFERENT real IPs for the SAME stable,
+non-migrating domain. INITIAL WRONG INTERPRETATION: assumed this
+looked like propagation disagreement. CORRECTED via investigation:
+large-scale services like GitHub deliberately use DNS-level load
+balancing / geographic routing, intentionally returning DIFFERENT
+valid IPs to different queries at all times, with no migration or
+inconsistency problem involved at all.
+
+CRITICAL LESSON: seeing different IPs from different resolvers is NOT,
+by itself, proof of a propagation problem - it could simply be normal,
+intentional load-balancing behavior for a large service. Additional
+context (a KNOWN recent DNS change, and a specific expected new value
+missing from certain resolvers) is required to actually conclude
+propagation delay, rather than jumping to that conclusion from
+surface-level resemblance alone.
+
+### The Decisive First Diagnostic Question
+When a teammate reports "DNS isn't resolving to the new site for some
+customers," the single most decisive first question is: "Is this
+happening to ALL customers, or only SOME?"
+
+- ALL customers, consistently affected -> MISCONFIGURATION (the record
+  itself is wrong at the source; no amount of waiting or cache-
+  clearing will fix it - the record itself must be corrected)
+- SOME customers affected -> narrows to CACHING or PROPAGATION.
+  Use `dig @specific-authoritative-server` (per-server, bypassing
+  local resolvers entirely) to check whether different authoritative
+  servers genuinely disagree with each other right now:
+  - If authoritative servers themselves disagree -> PROPAGATION
+    (still syncing; correct action is to wait, not to clear caches)
+  - If all authoritative servers already agree (correctly) but some
+    individual USERS still see the old site -> CACHING (correct
+    action: wait for TTL to expire, or affected users can manually
+    flush their own local DNS cache, per the P02 lesson)
+
+### Why This Matters Going Forward
+This decision tree turns a vague "DNS seems broken" complaint into a
+single decisive first question, then a specific dig-based test -
+avoiding wasted effort like telling users to "just wait" when the
+actual problem is a misconfigured record that will NEVER self-resolve
+no matter how long anyone waits. This is a strong, structured
+interview answer for "how do you troubleshoot DNS issues after a
+migration."
+
+### Key Takeaway
+Misconfiguration produces universal, consistent failure (fix the
+record). Propagation produces genuine disagreement between different
+authoritative servers on fresh queries (wait for sync). Caching
+produces disagreement between individual users based on their own
+stale local copies (wait for TTL, or manually flush). "Some customers
+affected differently" does not, by itself, prove propagation - large
+services often intentionally return different valid answers by
+design (load balancing), and this must be distinguished using
+targeted dig @server tests plus known context about the change,
+not surface-level appearance alone.
