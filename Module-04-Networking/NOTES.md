@@ -1887,3 +1887,60 @@ domain to auto-edit the right config block; a generic wildcard
 for ordinary traffic routing. The presence (or absence) of the -k
 flag being required is itself a simple, direct way to verify whether
 a certificate is genuinely CA-trusted versus self-signed.
+
+## Quick Reference: Steps to Add Real HTTPS (Let's Encrypt) to Nginx
+
+1. Prerequisite: you need a real domain name pointing at your server's
+   IP (Let's Encrypt cannot issue certs for bare IP addresses). For
+   lab/testing without a real domain, <your-ip>.nip.io works as a free
+   wildcard DNS workaround (verify with `dig <ip>.nip.io +short`).
+
+2. Install Certbot with the Nginx plugin:
+   sudo apt install certbot python3-certbot-nginx -y
+
+3. IMPORTANT: before running Certbot, make sure your Nginx config's
+   server_name directive is set to the ACTUAL domain, not a generic
+   wildcard (server_name _;). Certbot's Nginx plugin needs an exact
+   match to know which server block to edit.
+   sudo nano /etc/nginx/sites-available/<your-config>
+   -> change server_name _; to server_name yourdomain.com; (in both
+      the port 80 and port 443 blocks)
+   sudo nginx -t
+   sudo systemctl reload nginx
+
+4. Run Certbot, pointing it at your domain:
+   sudo certbot --nginx -d yourdomain.com
+   - Enter an email address (for renewal/expiry notices)
+   - Agree to the terms of service
+   This both ISSUES the certificate AND attempts to auto-install it
+   into Nginx in one step.
+
+5. If step 4's auto-install fails (commonly due to step 3 being
+   skipped), the certificate is still issued and saved - just install
+   it separately once server_name is fixed:
+   sudo certbot install --cert-name yourdomain.com
+
+6. Verify what Certbot changed:
+   cat /etc/nginx/sites-available/<your-config>
+   Expect: ssl_certificate and ssl_certificate_key now point to
+   /etc/letsencrypt/live/yourdomain.com/fullchain.pem and privkey.pem
+   (replacing any old self-signed paths), plus an automatically added
+   HTTP-to-HTTPS redirect block.
+
+7. Verify real, trusted HTTPS from an external client (not the server
+   itself, not via loopback):
+   curl -v https://yourdomain.com/
+   Success looks like: a clean 200 OK with NO -k/--insecure flag
+   needed - this is the definitive proof the certificate is genuinely
+   CA-trusted (contrast with a self-signed cert, which requires -k or
+   throws a verification error).
+
+8. Verify the HTTP-to-HTTPS redirect works:
+   curl -v http://yourdomain.com/
+   Success looks like: 301 Moved Permanently with a Location header
+   pointing to the https:// version.
+
+9. Automatic renewal: Certbot's installation creates a systemd timer
+   (certbot.timer) automatically - no manual cron job needed. Real
+   Let's Encrypt certs expire every 90 days; this timer handles
+   renewal in the background before that happens.
