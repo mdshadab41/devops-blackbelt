@@ -1944,3 +1944,95 @@ a certificate is genuinely CA-trusted versus self-signed.
    (certbot.timer) automatically - no manual cron job needed. Real
    Let's Encrypt certs expire every 90 days; this timer handles
    renewal in the background before that happens.
+
+## M04-P19 - Architecture: 3-Tier Network Design
+
+### Why Separate Tiers At All - Blast Radius
+Core reasoning: if an attacker compromises ONE tier, network-level
+separation (not just application logic) limits what they can reach
+next - this is defense-in-depth (P07's principle: Flask bound to
+127.0.0.1 behind Nginx) applied at architectural scale instead of a
+single server. Compromising the web tier should NOT automatically
+expose the database - the network itself, not just app permissions,
+must enforce this boundary.
+
+### Public vs Private Subnets
+- Public subnet: has a direct route to the internet (via an Internet
+  Gateway). ONLY the web tier belongs here - it is the sole tier that
+  genuinely needs to be internet-reachable.
+- Private subnet: NO direct route to the internet, in either
+  direction, by default. App tier and database tier both belong here
+  - unreachable directly from the internet; only reachable THROUGH
+  the web tier, exactly like Flask/127.0.0.1 in P06, enforced at the
+  network layer this time instead of just app binding.
+
+### NAT Gateway - Solving Outbound-Only Access for Private Resources
+Problem: private-subnet resources (app tier) sometimes genuinely need
+OUTBOUND internet access (patches, external APIs, package downloads)
+but must NEVER be reachable via unsolicited INBOUND connections.
+
+Mechanism: a NAT Gateway sits in the PUBLIC subnet (has its own real
+internet access) and relays outbound requests on behalf of private
+resources - similar in spirit to how Nginx relayed requests to Flask
+in P06, just for the reverse direction (outbound instead of inbound).
+From the internet's perspective, outbound traffic appears to originate
+from the NAT Gateway's own public IP.
+
+CRITICAL one-directional guarantee: because the PRIVATE resource
+always initiates the conversation (acting as the client, using an
+ephemeral port, per the P01 model), and the NAT Gateway only relays
+responses to ALREADY-INITIATED conversations, there is no mechanism
+for a brand-new, unsolicited inbound connection to ever reach the
+private resource. An attacker sending a fresh request directly at the
+NAT Gateway's public IP has NO matching outbound conversation to route
+against - it is structurally dropped, not just blocked by a
+configurable rule that could be misconfigured.
+
+Cost note (from STATUS.md's own resource-hygiene flag): NAT Gateways
+bill per-hour AND per-GB processed - a real, easy-to-overlook ongoing
+cost, worth deliberately scoping to only the private resources that
+genuinely need outbound access.
+
+### Mapping Our Own Lab Onto the 3-Tier Model
+- Web tier -> Nginx (public subnet, public IP, receives all customer
+  traffic, the only internet-facing component)
+- App tier -> Flask (private subnet, no direct internet exposure,
+  only reachable via Nginx's proxy_pass - our whole module's actual
+  setup has been running these on ONE EC2, a deliberate lab
+  simplification of what would be two separate subnets/instances in
+  real production)
+- Data tier -> a real database (never actually built in this lab,
+  Flask only returns hardcoded strings) - would live in a private
+  subnet, with Security Group rules restricting inbound access
+  SPECIFICALLY to the app tier's Security Group, not the entire
+  private CIDR range broadly. Common stronger real-world practice:
+  a SEPARATE private subnet specifically for the database, distinct
+  from the app tier's private subnet, as an additional independent
+  blast-radius boundary.
+
+### Security Group Principle Applied at Architecture Scale
+Same specific-allow-list discipline as P07's ufw lesson (allow only
+what is explicitly needed, never broadly) - applied here to Security
+Groups between tiers: the database's Security Group should allow
+inbound traffic ONLY from the app tier's specific Security Group
+(referenced by SG ID, not a broad CIDR range), never "anything in the
+private subnet" generically.
+
+### Why This Matters Going Forward
+This 3-tier + NAT Gateway model is standard architecture vocabulary
+for AWS solutions architect and DevOps interviews (directly relevant
+to M04-P21 System Design and Module 05/15 AWS/EKS modules) - the
+blast-radius reasoning and outbound-only NAT mechanism are both
+common, specific interview questions ("how would you design network
+isolation for a 3-tier app").
+
+### Key Takeaway
+3-tier network separation limits blast radius at the network level,
+not just application logic. Only the web tier needs a public subnet;
+app and data tiers stay private. A NAT Gateway provides outbound-only
+internet access for private resources via a structural (not just
+configured) one-directional guarantee - based on the client always
+initiating the connection first, exactly as ephemeral ports work in
+the P01 model. Security Groups between tiers should reference specific
+source Security Groups, not broad CIDR ranges, mirroring the
+allow-list discipline from ufw in P07.
