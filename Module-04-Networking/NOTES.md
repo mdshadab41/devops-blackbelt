@@ -2221,3 +2221,183 @@ theory to explain everything. When an entire diagnostic model checks
 out clean but the symptom remains, re-verify the most basic
 assumptions about the target itself before assuming the model missed
 something.
+
+## M04-P22 - Standalone Interview Q&A Round (Full Answers)
+
+Rapid-fire, no-notes interview simulation covering the full module.
+Score: 8/10 solid on first attempt, 2 needed clarification.
+
+### Q1: Difference between TCP and UDP, and a real-world use case for each
+TCP is connection-oriented - it performs a 3-way handshake (SYN,
+SYN-ACK, ACK) before any data flows, guarantees delivery (re-sends
+lost packets), and guarantees order (reassembles out-of-order packets
+correctly). UDP is connectionless - no handshake, no delivery
+guarantee, no re-sending of lost data; it fires data and moves on.
+Use cases: HTTP/web traffic and chat messages use TCP, since a lost
+or out-of-order chat message must never silently vanish. Live video
+calls and DNS lookups use UDP, since a dropped video frame or a lost
+DNS query (which can simply be retried) is preferable to the latency
+cost of TCP's handshake and retransmission overhead.
+ANSWERED CORRECTLY.
+
+### Q2: A user reports "connection refused." What does this tell you, and what does it rule out?
+"Refused" means the request GENUINELY REACHED the destination
+machine's operating system, and something there actively rejected it
+- either nothing is listening on that port/interface, or the
+application explicitly declined the connection. This is a FAST,
+active response. It RULES OUT a Security Group or firewall block
+earlier in the network path, because a block at that layer would
+silently drop the packet with zero response, producing a TIMEOUT
+(slow, no reply at all) instead of a refusal. Refused = something
+answered "no"; timeout = nobody answered at all.
+INITIALLY ANSWERED INCOMPLETELY - clarified above.
+
+### Q3: What is the actual purpose of a certificate's private key versus its public certificate in a TLS handshake?
+The PRIVATE KEY stays exclusively on the server and is used to prove
+the server's identity and decrypt data that was encrypted using the
+matching public key - specifically, it lets the server safely receive
+a symmetric key the client encrypted using the public key, since only
+the private key can decrypt that exchange. The PUBLIC CERTIFICATE is
+freely distributed to any client that connects; it contains the
+public key plus identifying information (domain name, issuing CA),
+and the client uses it to verify the server's identity and encrypt
+the initial key-exchange data. Together, they let the two sides
+safely agree on a shared symmetric key without ever transmitting that
+secret in a form an eavesdropper could use.
+(Compromise consequence, for context: if the private key were ever
+stolen, an attacker could impersonate the server to any client - but
+that is a CONSEQUENCE of the key's purpose, not the purpose itself.)
+INITIALLY ANSWERED WITH THE COMPROMISE SCENARIO INSTEAD OF THE
+PURPOSE - clarified above.
+
+### Q4: Difference between a reverse proxy and a load balancer. Can one tool be both?
+A reverse proxy sits in front of a backend and forwards client
+requests to it on the client's behalf, hiding the backend's real
+address/existence from the outside world (e.g. Nginx forwarding to
+Flask on 127.0.0.1, invisible to the internet). A load balancer
+specifically distributes incoming traffic across MULTIPLE backend
+instances, using an algorithm (round-robin, least-connections, ip-hash)
+to decide which one handles each request. Yes, one tool can genuinely
+be both simultaneously - Nginx (and HAProxy) commonly serve as a
+reverse proxy AND a load balancer at the same time, exactly as
+configured in this module (P06's single-backend reverse proxy became
+P09's multi-backend load-balancing upstream block, same tool, same
+config style, just pointed at more than one server).
+ANSWERED CORRECTLY.
+
+### Q5: Why does a load balancer using ip_hash risk uneven traffic distribution compared to round-robin?
+Round-robin distributes requests strictly in sequence regardless of
+who is sending them, guaranteeing an even spread of REQUEST COUNT
+across backends over time. ip_hash instead maps a given client IP
+consistently to the SAME backend every time (for session-consistency
+reasons - e.g. an in-memory shopping cart tied to one specific
+server). If certain IPs generate disproportionately more traffic than
+others (e.g. one very active user, or many users behind the same
+corporate NAT sharing one visible IP), all of that traffic gets
+funneled to whichever single backend that IP happens to hash to,
+while other backends may sit comparatively idle - trading even
+distribution for session stickiness.
+ANSWERED CORRECTLY.
+
+### Q6: Exact difference between a 500 and a 502 status code
+500 Internal Server Error means the backend application ITSELF IS
+ALIVE, received the request, and its own code threw an unhandled
+exception or error while processing it - the backend still manages to
+generate and send back a real (if unhelpful) response describing the
+failure. 502 Bad Gateway means the PROXY (e.g. Nginx) could not get
+ANY valid response from its backend at all - the backend is
+unreachable, crashed entirely, or hung with no response whatsoever,
+so the proxy itself generates the 502 on the backend's behalf, since
+the backend never had the chance to respond. In short: 500 = "I'm
+alive but broke while handling this"; 502 = "I asked my backend and
+got total silence/failure."
+INITIALLY JUST NAMED BOTH WITHOUT EXPLAINING THE MECHANISM -
+clarified above.
+
+### Q7: Actual purpose of an ephemeral port, and does the server or client use one?
+An ephemeral port is a TEMPORARY, randomly-assigned port number that
+the CLIENT side of a connection uses for that one specific outgoing
+connection - a fresh one is assigned for every new connection, even
+to the identical destination. This exists because a single client
+machine's IP address stays fixed, but it may have many simultaneous
+connections open at once (multiple browser tabs to the same site, for
+example) - the ephemeral port is what lets the operating system tell
+these otherwise-identical connections apart, since the full
+connection identity is (client IP, client ephemeral port, server IP,
+server FIXED port). The SERVER, by contrast, always listens on one
+fixed, known port (e.g. 443) so that clients can reliably find it -
+the server never uses an ephemeral port for its own listening socket.
+INITIALLY DESCRIBED THE EFFECT (enabling multiple tabs) RATHER THAN
+THE DEFINITION ITSELF - clarified above.
+
+### Q8: Difference between propagation delay and DNS caching, and how to distinguish using dig
+DNS caching is the actual mechanism: different resolvers/clients hold
+onto an old, previously-fetched DNS answer until its TTL expires, even
+though the authoritative source already has the correct, updated
+answer. "Propagation delay" is really just the informal, observed
+NAME for the time it takes those various cached copies, scattered
+across many different resolvers worldwide, to naturally expire and
+get refreshed - it is not a fundamentally separate mechanism, just the
+aggregate, real-world EFFECT of caching's built-in delay playing out
+across the internet's many independent resolvers. To distinguish
+"is this actually propagating/still cached somewhere" from "is the
+record itself simply wrong," use dig @<specific-authoritative-server>
++short to query an authoritative source DIRECTLY, bypassing all local
+and intermediate caches - if the authoritative answer is already
+correct, any lingering wrong answers seen elsewhere are just
+caching/propagation catching up; if the authoritative answer itself
+is wrong, that points to a genuine misconfiguration instead.
+ANSWERED CORRECTLY AND PRECISELY - stronger than typical, reflecting
+the corrected understanding built during P15's own investigation.
+
+### Q9: A wave of 502s appears during a traffic spike, then disappears once traffic drops. Likely cause, and how does it differ from a crash-loop causing intermittent 502s?
+Likely cause: FILE DESCRIPTOR EXHAUSTION on the proxy (Nginx) itself -
+under high concurrent load, Nginx needs roughly 2 file descriptors per
+simultaneous request (one for the incoming client connection, one for
+the outgoing connection to the backend), and can exceed its configured
+limit (e.g. 1024) purely from CONCURRENCY, even with a perfectly
+healthy backend. This SELF-RESOLVES automatically once concurrent load
+decreases, since file descriptors free up immediately with no code
+changes or restarts needed. This is fundamentally different from a
+CRASH LOOP (a backend repeatedly crashing and restarting), which would
+NOT be fixed just by reduced traffic - a crash-looping backend keeps
+crashing regardless of how much or how little load it receives, so its
+502s would persist independent of traffic volume, whereas file
+descriptor exhaustion is directly, deterministically tied to
+concurrent load level at any given moment.
+ANSWERED CORRECTLY.
+
+### Q10: Why put a database in a private subnet with no direct internet route, but still need a NAT Gateway somewhere in the architecture? What is the NAT Gateway actually for, if the database itself needs no outbound internet access either?
+The database sits in a private subnet specifically so it is NEVER
+directly reachable from the internet, limiting blast radius if the
+web tier is ever compromised - and a database typically has NO
+legitimate reason to initiate outbound internet connections either,
+so it needs neither inbound nor outbound direct internet access. The
+NAT Gateway instead exists to serve the APP TIER's occasional,
+legitimate OUTBOUND-only needs - such as downloading security patches,
+calling external APIs (payment processors, email services), or
+pulling packages/images from public registries - while still keeping
+the app tier itself fully unreachable via any unsolicited INBOUND
+connection from the internet. The NAT Gateway's one-directional
+guarantee (only relays responses to connections the private resource
+itself already initiated) is what makes this outbound-only access
+possible without compromising the tier's inbound isolation.
+ANSWERED CORRECTLY.
+
+### Key Retention Gaps Identified
+Two of the "needs clarification" answers shared a pattern: describing
+an EFFECT or CONSEQUENCE of a concept rather than its actual
+DEFINITION or MECHANISM (Q3: compromise risk instead of purpose; Q7:
+symptom of use instead of definition; similarly Q6 initially just
+named terms rather than explaining mechanism). Worth deliberately
+practicing stating definitions precisely and leading with mechanism,
+not just recognizing what a concept is used for or what breaks
+without it - a common, correctable gap under real interview pressure.
+
+### Why This Matters Going Forward
+This rapid-fire format closely simulates Round 2 (DevOps tools +
+hands-on scenarios) of the Adobe-style interview structure referenced
+in the master prompt - worth repeating this exact Q&A style as a
+warm-up before Module 25's formal mock interviews, and worth
+re-reading these full answers as spaced-repetition material before
+any real interview.
