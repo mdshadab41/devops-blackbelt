@@ -2036,3 +2036,70 @@ initiating the connection first, exactly as ephemeral ports work in
 the P01 model. Security Groups between tiers should reference specific
 source Security Groups, not broad CIDR ranges, mirroring the
 allow-list discipline from ufw in P07.
+
+## M04-P20 - Architecture: Nginx vs HAProxy vs ALB Tradeoffs
+
+### Origin and Primary Purpose
+- Nginx: originally a WEB SERVER (static file serving) that later
+  gained reverse-proxy/load-balancing features - does double duty as
+  both a full web server AND a proxy (exactly how it was used all
+  module: static-style responses, TLS termination P10, load balancing
+  P09, all in one tool)
+- HAProxy: purpose-built from the ground up for ONE job only -
+  load balancing/proxying, no web-serving features at all. Often
+  cited as having more advanced/precise load-balancing algorithms and
+  health-check tuning than Nginx's defaults, specifically because it
+  has no other responsibilities competing for its design focus
+- ALB (Application Load Balancer): not installed/configured software
+  at all - a FULLY MANAGED AWS service
+
+### Self-Managed (Nginx/HAProxy) vs Managed (ALB) - The Real Tradeoff
+Self-managed: FULL control (custom config logic, any module, any
+parameter tuning) but FULL responsibility - patching security
+vulnerabilities, scaling manually as traffic grows, ensuring survival
+across reboots, monitoring health. Directly experienced this cost
+firsthand across this session: THREE separate real EC2 reboots (P12,
+P17-addendum) each required manually restarting Flask/Gunicorn
+processes - nohup alone does not even survive a reboot (only a
+session ending), only a real supervisor (systemd, which Nginx itself
+uses) does.
+
+Managed (ALB): AWS handles scaling, patching, and availability
+AUTOMATICALLY and invisibly - confirmed via direct reasoning that an
+ALB would NEVER have required the kind of manual intervention
+personally experienced this session (checking uptime, restarting dead
+processes, diagnosing ss -tuln after each reboot). Tradeoff: limited
+to whatever configuration ALB exposes through its own interface - no
+custom modules, no arbitrary config logic the way Nginx/HAProxy allow.
+
+### When to Choose Which (synthesized from the tradeoffs)
+- Nginx: when you want ONE tool for multiple jobs (web serving +
+  proxying + TLS termination + caching), and value configuration
+  flexibility
+- HAProxy: when load balancing/proxying performance and fine-grained
+  control is the SOLE priority, with no need for general web-server
+  features
+- ALB: when minimizing operational overhead matters more than
+  configuration flexibility - a classic "build vs buy" tradeoff;
+  commodity infrastructure work (basic load balancing) is often better
+  left to a managed service, reserving self-hosted tools for genuinely
+  custom logic a managed service cannot provide
+
+### Why This Matters Going Forward
+This exact self-managed vs managed tradeoff reasoning generalizes far
+beyond load balancers - directly relevant to Module 05 (AWS services
+generally), Module 15 (EKS vs self-managed Kubernetes), and Module 21
+(System Design) interview questions about infrastructure choices. The
+personal, lived evidence of manual reboot recovery this session is a
+genuinely strong, concrete example to cite in an interview when asked
+"why would you choose a managed service."
+
+### Key Takeaway
+Nginx and HAProxy trade operational responsibility for configuration
+flexibility; ALB trades configuration flexibility for zero operational
+burden. The choice is not about which is objectively "better" but
+about which tradeoff fits the situation - custom, complex routing
+logic favors self-hosted; commodity, standard load balancing favors
+managed, especially when the team's real, lived operational cost of
+self-hosting (as personally experienced this session) outweighs the
+value of the extra control.
