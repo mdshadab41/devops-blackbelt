@@ -1796,3 +1796,94 @@ point (whoami/hostname) and the actual backend that answered (reading
 the response body, not just the timing numbers) were both necessary
 to trust this measurement as genuine evidence rather than an artifact
 of testing from the wrong place.
+
+## M04-P18 - Manager Task: Set Up HTTPS Before Friday's Launch
+
+### The Real Constraint: A Domain Is Required, Not Just an IP
+Let's Encrypt (the free, automated CA referenced in P10) CANNOT issue
+certificates for raw IP addresses - its automated domain-ownership
+verification process is built entirely around proving control of a
+real domain name (via DNS or served files), which an IP address alone
+cannot satisfy. This is a genuine, real prerequisite to flag to a
+manager before Friday - a domain must be registered and pointed at the
+server first; this cannot be skipped or worked around technically.
+
+### Lab Workaround: nip.io (Verified Real, Not Just Assumed)
+For lab/testing purposes without registering a real domain, used
+nip.io - a free service providing wildcard DNS that automatically
+resolves <any-ip>.nip.io to that exact IP. Verified directly:
+dig 13.201.78.186.nip.io +short returned 13.201.78.186 - confirmed
+genuinely working before relying on it. Explicitly NOT suitable for a
+real production launch (reveals the IP directly, breaks the moment
+the IP changes) - purely a legitimate way to prove the Certbot/Let's
+Encrypt process works technically, in a lab without a real domain.
+
+### Certbot - Real Installation and Real Incident
+sudo apt install certbot python3-certbot-nginx -y
+Installation automatically created a systemd TIMER
+(certbot.timer) - since real Let's Encrypt certificates expire every
+90 days, this handles automatic renewal in the background, addressing
+a real, common production incident category (expired-cert outages)
+before it can happen.
+
+REAL INCIDENT: sudo certbot --nginx -d 13.201.78.186.nip.io
+successfully ISSUED the certificate (Let's Encrypt genuinely verified
+domain ownership), but FAILED to automatically install/deploy it into
+Nginx: "Could not automatically find a matching server block... Set
+the server_name directive."
+
+ROOT CAUSE: existing Nginx config used `server_name _;` (P06/P10's
+generic wildcard, matching any hostname) rather than the actual
+domain name. Certbot's Nginx plugin requires a server_name that
+LITERALLY matches the requested domain to know which block to edit -
+a generic wildcard doesn't satisfy this, since it doesn't "name" any
+specific domain to match against.
+
+FIXED by updating server_name to the real domain
+(13.201.78.186.nip.io) in both HTTP and HTTPS server blocks, then
+re-running the install step specifically:
+sudo certbot install --cert-name 13.201.78.186.nip.io
+-> "Successfully deployed certificate"
+
+### What Certbot Actually Changed (verified via cat, not assumed)
+1. ssl_certificate / ssl_certificate_key paths updated from the old
+   self-signed files (/etc/nginx/ssl/selfsigned.*, from P10) to the
+   new real certificate: /etc/letsencrypt/live/<domain>/fullchain.pem
+   and privkey.pem
+2. Automatically ADDED an HTTP-to-HTTPS redirect block:
+   if ($host = <domain>) { return 301 https://$host$request_uri; }
+   RECOGNIZED as the same correct redirect LOGIC already validated as
+   correct back in P11's debug challenge - Certbot automates a best
+   practice already understood conceptually, just scoped with an
+   explicit host-match condition rather than being unconditional.
+
+### Real, Verified End-to-End Proof (from actual external laptop)
+curl -v https://13.201.78.186.nip.io/ - succeeded with a clean 200 OK,
+WITHOUT the -k flag required back in P10 for the self-signed cert -
+direct, definitive proof the certificate is genuinely trusted by
+default, matching exactly what a real customer's browser would
+experience (no warnings, padlock-verified).
+
+curl -v http://13.201.78.186.nip.io/ - confirmed 301 Moved Permanently
+with Location: https://13.201.78.186.nip.io/ - HTTP-to-HTTPS redirect
+genuinely working.
+
+### Why This Matters Going Forward
+The domain-ownership prerequisite is a common real-world blocker
+non-technical stakeholders don't anticipate - flagging it clearly and
+early (rather than after Friday) is itself a valuable, demonstrable
+professional skill. The self-signed-vs-CA-signed distinction from P10
+is now fully closed with a real, working, verified CA-signed
+deployment - directly reusable knowledge for any future real project
+requiring public HTTPS.
+
+### Key Takeaway
+Let's Encrypt requires a real, verifiable domain - never a bare IP -
+and this constraint must be surfaced to stakeholders as a real
+planning dependency, not discovered at the last minute. Certbot's
+Nginx plugin requires server_name to literally match the target
+domain to auto-edit the right config block; a generic wildcard
+(server_name _;) breaks this automation, even though it works fine
+for ordinary traffic routing. The presence (or absence) of the -k
+flag being required is itself a simple, direct way to verify whether
+a certificate is genuinely CA-trusted versus self-signed.
