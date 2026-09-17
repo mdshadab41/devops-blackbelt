@@ -2103,3 +2103,121 @@ logic favors self-hosted; commodity, standard load balancing favors
 managed, especially when the team's real, lived operational cost of
 self-hosting (as personally experienced this session) outweighs the
 value of the extra control.
+
+## M04-P21 - Unguided RCA: Reproduce and Root-Cause a Connectivity Failure
+
+### RCA Report
+
+**Problem:** Reported symptom: "tried hitting the site, got a 502."
+Investigation revealed this was actually TWO separate, independent
+problems layered on top of each other - not one single root cause.
+
+**Impact:** Complete inability to reach the site both locally (502)
+and externally (timeout), for reasons that turned out to be entirely
+unrelated to each other.
+
+**Timeline (self-directed investigation, no guided hints):**
+1. dig 13.201.78.186.nip.io +short - confirmed DNS resolved correctly
+   and instantly, ruling out DNS as a factor
+2. curl -I http://13.201.78.186.nip.io - hung indefinitely with zero
+   output, requiring manual interruption
+3. nc -vz -w 5 13.201.78.186 80 - confirmed a genuine TIMEOUT (not
+   refused) from an external-style test
+4. sudo ss -lntp | grep ':80' - confirmed Nginx was alive and
+   listening on 0.0.0.0:80
+5. sudo ufw status verbose - confirmed port 80 explicitly allowed
+6. curl -v http://127.0.0.1 (loopback, local) - unexpectedly
+   SUCCEEDED in reaching Nginx, but returned a real 502 Bad Gateway -
+   this was the key moment that revealed TWO separate problems
+   existed: a working local connection with a bad response (502),
+   and a completely blocked external connection (timeout) - these
+   could not share one single root cause, since a 502 requires Nginx
+   to have successfully processed a request, while the external test
+   never got that far at all
+7. Investigated the 502 first: ss -tuln | grep -E "5001|5002|5003"
+   returned BLANK - no backend processes listening at all
+8. uptime showed "up 51 min" - confirmed the EC2 instance had
+   rebooted, killing all nohup-backed Flask/Gunicorn processes (same
+   root cause pattern as P12 and the P17 addendum - nohup survives a
+   session ending but NOT a full machine reboot)
+9. Restarted all 3 backend processes (Flask on 5002/5003, Gunicorn on
+   5001) - confirmed via ss -tuln and curl that the 502 was resolved
+10. Re-tested nc against the original IP - STILL timed out, confirming
+    this was a genuinely separate, still-unresolved second issue
+11. Re-verified every remaining layer of the 3-gate model (Security
+    Group inbound rules, checked directly in the AWS console) - found
+    all three expected rules present and correctly configured (SSH/22,
+    HTTPS/443, HTTP/80, all source 0.0.0.0/0)
+12. With every layer of the model checked and appearing correct, and
+    knowing a reboot had JUST occurred, checked the EC2 instance's
+    CURRENT public IP directly in the console - found it had changed
+    from 13.201.78.186 to 3.110.222.249, exactly matching the
+    documented "public IP changes on stop/start" behavior in
+    STATUS.md
+13. Re-tested nc against the NEW, correct IP - succeeded immediately,
+    confirming this as the actual root cause of the second problem
+
+**Root Cause:**
+- Problem 1 (502): the EC2 instance rebooted, and all nohup-backed
+  Flask/Gunicorn backend processes died with it (nohup does not
+  survive a full reboot, only a session ending) - Nginx itself
+  survived automatically (systemd-managed), but had nothing to
+  actually forward requests to.
+- Problem 2 (external timeout): the SAME reboot also changed the
+  EC2's public IP address. All external connectivity tests were being
+  run against the OLD, now-invalid IP - every layer being tested
+  (Security Group, ufw, Nginx binding) was actually configured
+  correctly the entire time; the target address itself was simply
+  wrong.
+
+**Resolution:**
+1. Manually restarted all 3 backend processes via nohup
+2. Identified and switched to the instance's new, current public IP
+   for all further testing
+
+**Preventive Action:** For problem 1 - use a real process supervisor
+(systemd service, or Docker/Kubernetes in later modules) instead of
+nohup, so backend processes survive reboots automatically, not just
+session endings. For problem 2 - this is exactly the real-world
+justification for an AWS Elastic IP (a static, unchanging public IP),
+first identified as a gap back in P08 - would have entirely prevented
+wasting investigation time on a target address that was silently
+stale.
+
+**Lessons Learned:**
+1. A single reported symptom ("got a 502") does not guarantee a
+   single root cause - two genuinely independent problems can coexist
+   and must be recognized as separate once evidence stops fitting one
+   unified explanation (the moment loopback curl SUCCEEDED while
+   external nc still TIMED OUT was the critical signal that split
+   this into two investigations).
+2. When every layer of a well-established diagnostic model (3-gate:
+   Security Group, ufw, application) checks out as correct, but the
+   symptom persists, the problem may not be IN the model at all - it
+   may be a stale assumption about the target itself (in this case,
+   an IP address that had silently changed). Re-verifying the most
+   basic assumption (is this even the right address anymore) after
+   exhausting the standard checklist was what actually found the real
+   cause.
+3. A known environmental instability (EC2 reboots causing both
+   process loss AND IP changes, both already documented earlier this
+   session in P12/P17) can resurface and cause MULTIPLE simultaneous,
+   seemingly unrelated symptoms from a SINGLE underlying event - worth
+   checking `uptime` early in any future unexplained connectivity
+   investigation in this specific lab environment.
+
+### Why This Matters Going Forward
+This is a realistic simulation of a genuinely common senior-level
+debugging challenge: distinguishing "one root cause, multiple
+symptoms" from "coincidentally simultaneous, unrelated root causes" -
+directly relevant to real production incidents and a strong
+interview narrative for "describe a time you debugged something
+complex."
+
+### Key Takeaway
+Evidence that doesn't fit a single explanation is a signal to split
+the investigation into separate hypotheses, not to keep forcing one
+theory to explain everything. When an entire diagnostic model checks
+out clean but the symptom remains, re-verify the most basic
+assumptions about the target itself before assuming the model missed
+something.
