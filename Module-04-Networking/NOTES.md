@@ -1737,3 +1737,62 @@ server is single-threaded and unsuitable for any real latency-
 sensitive production traffic; a real WSGI server with multiple workers
 directly reduces queuing-induced latency, provable with real, run
 side-by-side measurements rather than assumed.
+
+## M04-P17 Addendum - Verifying the Fix With a Genuine External Test
+
+### Real Incident: Multiple False "External" Tests Were Actually Internal
+After deploying Gunicorn to port 5001 (replacing that backend's dev
+server), attempted to re-verify with an external latency test. THREE
+consecutive attempts produced suspiciously fast results (near-zero,
+sub-millisecond TCP connect times) that were WRONGLY assumed to be
+genuine improvements at first glance. Investigated rather than
+accepted implausible good news: ran whoami/hostname in the SAME
+window used for testing - confirmed all three "external" tests were
+actually run from INSIDE the EC2's own SSH session (whoami: ubuntu,
+hostname: ip-172-31-13-66), not from the laptop at all. This
+reproduced the exact same class of mistake as the original P17
+loopback test, just disguised differently (testing the public IP FROM
+the EC2 itself, rather than 127.0.0.1, produces similarly
+unrepresentative fast results via AWS's internal routing).
+
+Fixed by explicitly opening a genuinely separate, local terminal (Git
+Bash on the actual Windows laptop) and re-verifying its identity
+(whoami/hostname showing the real laptop, not the EC2) BEFORE trusting
+any timing result from it.
+
+### Real Incident: Another EC2 Reboot Mid-Verification
+While verifying, a 502 Bad Gateway appeared unexpectedly. Investigated
+via ss -tuln + ps aux (standard method by now) - confirmed ALL 3
+backends were dead again. uptime showed "up 11 min" - a THIRD EC2
+reboot during this single session, also explaining the public IP
+change noticed earlier (13.233.117.30 -> 13.201.78.186). This is now
+a clearly RECURRING environmental instability (reboots have now
+disrupted P12 and P17 in this same session) - worth flagging as a
+standing operational reality of this Free Tier lab environment:
+ALWAYS verify backend processes are alive (ss -tuln) before trusting
+any measurement, especially after any gap in activity, rather than
+assuming a previous setup is still intact.
+
+### Final, Verified External Measurement
+Confirmed via curl -s (checked response body for "port 5001" BEFORE
+trusting the timing test) that the request genuinely hit the
+Gunicorn-upgraded backend:
+
+BEFORE (dev server): Total 133.9ms (Connect: 77.7ms, Processing: ~56ms)
+AFTER (Gunicorn, confirmed hit): Total 52.6ms (Connect: 25.5ms,
+Processing: ~27ms)
+
+Processing time specifically: ~56ms -> ~27ms, ~52% reduction -
+genuinely consistent with the independently-measured ~62% reduction
+from the local ab load test, corroborating the finding via two
+different methods (controlled local load test AND real external
+single-request measurement).
+
+### Key Lesson Reinforced
+An implausibly GOOD result deserves the same scrutiny as an
+implausibly BAD one - the instinct to investigate should not be
+reserved only for failures or errors. Verifying the actual vantage
+point (whoami/hostname) and the actual backend that answered (reading
+the response body, not just the timing numbers) were both necessary
+to trust this measurement as genuine evidence rather than an artifact
+of testing from the wrong place.
