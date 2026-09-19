@@ -2401,3 +2401,53 @@ in the master prompt - worth repeating this exact Q&A style as a
 warm-up before Module 25's formal mock interviews, and worth
 re-reading these full answers as spaced-repetition material before
 any real interview.
+
+## M04-P23 - Timed Interview Challenge: 3 Rapid Networking Scenarios
+
+### Scenario 1: Sudden total timeout, no deployment
+Correct approach: timeout (not refused) + zero code deployment
+strongly points to Gate 1 (Security Group) - specifically check for a
+recently removed/restricted inbound rule. REAL MISTAKE MADE UNDER TIME
+PRESSURE: initially proposed checking "if port 443 is listening" -
+this is a Gate 3 check, but the symptom (timeout) had ALREADY ruled
+out anything past Gate 1. Lesson: under time pressure, it is easy to
+default to a generic "check the thing" instinct instead of applying
+the specific model already built - the symptom itself should
+immediately narrow which gate to check, skipping irrelevant layers
+entirely rather than checking everything in sequence.
+
+### Scenario 2: Teammate reports "refused," insists Security Group is fine
+Correct approach: "refused" rules out Gate 1 BY DEFINITION - the
+teammate's claim that the Security Group hasn't changed is actually
+CONSISTENT with the evidence, not something to argue with. Trust the
+symptom's implication and go straight to Gate 2 (ufw) or Gate 3 (the
+app itself) - ss -tuln is the single most decisive first check (per
+P13's lesson: it can make checking ufw entirely unnecessary if nothing
+is even listening). ANSWERED CORRECTLY AND QUICKLY.
+
+### Scenario 3: 1-in-3 failures with 3 backends, refresh fixes it
+Correct approach: recognize "1 in 3 fails" as a strong numeric
+pattern-match against having exactly 3 backend instances - points to
+ONE specific unhealthy backend in the round-robin rotation, with
+refresh "fixing it" simply by re-routing to a different, healthy
+instance next time (not because anything was actually repaired). Next
+step: test each backend individually (curl directly to each port) to
+isolate the specific broken instance, then investigate it (likely a
+crash-loop pattern from P14, given the intermittent, self-recovering-
+on-retry nature). ANSWERED CORRECTLY after clarifying the reasoning.
+
+### Overall Result
+3/3 scenarios reached the correct conclusion. One genuine, useful
+mistake caught under time pressure (Scenario 1: applying a Gate 3
+check to a Gate 1 symptom) - a real, common interview stumble worth
+having already made once here, in practice, rather than for the
+first time in a real interview.
+
+### Key Takeaway
+Under time pressure, the instinct to "just check things" can override
+already-built diagnostic models - the discipline is to let the
+SYMPTOM ITSELF immediately narrow which layer to investigate (timeout
+= Gate 1 only; refused = Gate 2/3 only), rather than defaulting to a
+generic checklist. Numeric patterns in a reported symptom (e.g. "1 in
+3" matching exactly 3 backend instances) are often a direct, fast clue
+worth pattern-matching against known infrastructure counts immediately.
