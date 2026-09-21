@@ -2531,3 +2531,63 @@ This is a genuinely new piece of hardening never built anywhere in
 P01-P23 - directly protects against a single IP/script hammering the
 checkout API, a real, common production concern explicitly named in
 the scenario framing throughout this module.
+
+## M04-MINI - Real Incident: Mid-Project Reboot Broke the nip.io Domain
+
+### What Happened
+Mid-way through setting up HTTPS, another EC2 reboot occurred (18 min
+uptime observed), changing the public IP from 13.201.78.186 to
+15.252.98.42. This broke the nip.io domain entirely, since nip.io
+permanently encodes the IP directly in the domain name text itself -
+there is no actual DNS record to update; the OLD domain
+(13.201.78.186.nip.io) will always resolve to the OLD IP forever,
+regardless of what the server's real current IP becomes.
+
+### Real, Direct Proof of nip.io's Documented Limitation
+This is the exact limitation flagged (but not yet directly
+experienced) back in P18: "explicitly NOT suitable for a real
+production launch... breaks the moment the IP changes." Confirmed
+with real evidence: dig 13.201.78.186.nip.io +short still correctly
+returned the OLD ip (13.201.78.186) - proving the domain is
+permanently stale, not just temporarily out of sync.
+
+### Real Verification: systemd Fix Survived an ACTUAL Unplanned Reboot
+Before diagnosing the domain issue, confirmed the earlier systemd fix
+held up under this GENUINE, unplanned reboot (not just the earlier
+deliberate test): all 3 backend services were already running
+automatically, with zero manual intervention, immediately after
+reconnecting. This is stronger evidence than the original deliberate
+test, since it happened without being specifically set up to test it.
+
+### Secondary Real Lesson: server_name Being Specific Changes curl Behavior
+After fixing server_name from the generic wildcard (_) to a specific
+domain (a REQUIRED step for Certbot, per P18), plain
+`curl http://127.0.0.1/` (with an implicit Host: 127.0.0.1 header) no
+longer matched the server block at all, since Nginx now strictly
+matches based on the Host header once server_name is domain-specific.
+Explicitly matching the Host header (curl -H "Host: <domain>" ...)
+confirmed the actual config was working correctly the whole time -
+the "failure" was a testing method mismatch, not a real config bug.
+
+### Real Fix
+Generated a NEW nip.io domain matching the CURRENT real IP
+(15.252.98.42.nip.io), verified it resolved correctly via dig, updated
+Nginx's server_name to match, and re-ran Certbot with --force-renewal
+against the existing cert-name. Certbot correctly detected this as a
+meaningful change (prompting "did you intend to make this change?")
+rather than silently ignoring the domain mismatch - confirmed
+--force-renewal was genuinely necessary here, correcting an initial
+wrong guess that it "wouldn't matter either way."
+
+Final verification from actual external laptop: curl -v to the new
+domain succeeded with a clean 200 OK, no -k flag needed - full,
+genuine end-to-end proof the entire chain (DNS, Nginx, rate limiting,
+load-balanced Gunicorn backends, real CA-signed HTTPS) works correctly
+even after surviving a real, unplanned production-style incident
+mid-build.
+
+### Why This Matters
+This is now a doubly-proven case for why a static, unchanging address
+(AWS Elastic IP) is a real, non-optional requirement for any genuine
+production deployment - nip.io's limitation was flagged in P18 as
+theory, and directly, painfully experienced here as fact.
