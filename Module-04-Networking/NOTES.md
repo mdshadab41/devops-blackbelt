@@ -2498,3 +2498,36 @@ share the same fundamental limitation. The only real fix is registering
 the process as an actual systemd service, which is exactly why Nginx
 never needed manual recovery all module while every hand-started Flask/
 Gunicorn instance did.
+
+## M04-MINI - Rate Limiting (New Hardening, Never Built Before This Module)
+
+### Config
+limit_req_zone $binary_remote_addr zone=checkout_limit:10m rate=10r/s;
+(defines the rule once, by IP, named "checkout_limit")
+limit_req zone=checkout_limit burst=20 nodelay;
+(applied only inside the / location block, NOT /health - so
+monitoring/health checks are never throttled)
+
+Same "define once, apply selectively" pattern as the upstream block
+from P09 - lets different locations have different (or no) rate
+limits while sharing one named rule definition.
+
+### Real Test and Mechanism Understood
+Fired 30 near-simultaneous requests: 23 succeeded (200), 7 were
+rate-limited (503 - Nginx's default rejection for this).
+
+Mechanism clarified: rate=10r/s is an AVERAGE steady rate (one request
+per 100ms), not "10 then stop." burst=20 is a bucket of extra
+capacity that absorbs a sudden spike, refilling gradually at that same
+steady rate - it is not a one-time bonus. nodelay lets burst-covered
+requests through IMMEDIATELY rather than being queued/delayed to fit
+the steady rate. The observed cutoff (23, not exactly 20) reflects a
+few genuine refill intervals occurring during the brief real time the
+test loop took to execute - burst capacity is time-sensitive, not a
+fixed, instant allowance.
+
+### Why This Matters
+This is a genuinely new piece of hardening never built anywhere in
+P01-P23 - directly protects against a single IP/script hammering the
+checkout API, a real, common production concern explicitly named in
+the scenario framing throughout this module.
