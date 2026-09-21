@@ -2451,3 +2451,50 @@ SYMPTOM ITSELF immediately narrow which layer to investigate (timeout
 generic checklist. Numeric patterns in a reported symptom (e.g. "1 in
 3" matching exactly 3 backend instances) are often a direct, fast clue
 worth pattern-matching against known infrastructure counts immediately.
+
+## M04-MINI - Real Fix for the Session's Recurring Reboot Problem
+
+### The Problem This Solves
+Across this entire module, EC2 reboots repeatedly killed
+nohup/--daemon-backed processes, causing real incidents in P09, P11,
+P12, P14, P16, P17, and P21 - every one required manual restart after
+discovery via ss -tuln returning blank and uptime showing a recent
+reboot.
+
+### Root Cause of Why nohup/--daemon Never Actually Fixed It
+Both nohup and gunicorn's --daemon flag only detach a process from
+the CURRENT TERMINAL SESSION - neither registers the process with
+systemd, so neither survives an actual machine reboot, which wipes
+all running processes regardless of how they were started. Only
+Nginx survived reboots automatically all module, because it alone was
+a real systemd service.
+
+### Real Fix: Proper systemd Service Files
+Created /etc/systemd/system/checkout-backend-{1,2,3}.service for each
+Gunicorn instance, with:
+- Restart=always: automatically relaunches the process on ANY exit
+  (crash OR reboot)
+- StartLimitBurst=5 + StartLimitIntervalSec=60: caps restart attempts
+  to 5 within 60 seconds, then gives up - a deliberate safety net so
+  Restart=always doesn't SILENTLY MASK a genuinely broken, persistently
+  crashing app by endlessly relaunching it forever (the exact
+  crash-loop pattern studied in P14/P16) - balances real recovery
+  against hiding a real bug.
+- WantedBy=multi-user.target + systemctl enable: ensures the service
+  starts automatically at boot, not just when manually started once.
+
+### Real, Definitive Proof
+Deliberately rebooted the EC2 instance (sudo reboot) as a genuine
+test. After reboot: uptime showed "up 1 min," and ALL 3 backends were
+ALREADY alive and responding correctly - zero manual intervention
+required. This is the single most valuable verification in this
+module - it retroactively would have prevented every reboot-related
+incident encountered across P09 through P21.
+
+### Key Takeaway
+The fix for "background processes die on reboot" was never a better
+backgrounding trick (nohup, --daemon, screen, tmux) - all of these
+share the same fundamental limitation. The only real fix is registering
+the process as an actual systemd service, which is exactly why Nginx
+never needed manual recovery all module while every hand-started Flask/
+Gunicorn instance did.
