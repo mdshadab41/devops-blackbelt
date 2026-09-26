@@ -176,3 +176,58 @@ temporary ones.
   buckets than non-versioned ones (unbounded silent storage growth)
 - Know that SSE-S3 is now default-on, so "is my bucket encrypted?" isn't
   automatically a red flag anymore — the real question is which type
+
+
+## M05-P05: EC2 lifecycle, EBS snapshots, AMIs, IMDSv2
+
+**What I did:**
+- Confirmed the instance has exactly one EBS volume (20GB, gp3) — matches
+  the Module 03 permanent resize noted in STATUS.md
+- Created a manual snapshot of the volume — watched it go from pending/0%
+  to completed/100% in real time, proving snapshots copy data asynchronously
+  in the background, independent of any command watching them
+- Learned the hard way: `aws ec2 wait` can be interrupted (exit code 130 =
+  Ctrl+C), which looks like "nothing happened" but the underlying job keeps
+  running regardless — checked real progress (83%) even after the wait died
+- Created a full AMI directly from the running instance using `--no-reboot`,
+  understood the tradeoff: default behavior reboots the instance for
+  filesystem consistency; `--no-reboot` avoids downtime but risks slightly
+  less consistency if something was mid-write
+- Noted the volume is NOT encrypted (`"Encrypted": false`) — a real audit
+  finding, likely to surface again in the P21 Prowler scan
+
+**Concepts learned:**
+- EBS volume and EC2 instance are separate resources with separate
+  lifecycles — this is *why* data survives stop/start, and why volumes
+  can be resized without rebuilding the instance
+- Snapshot = raw disk backup (incremental, cheap after the first one).
+  AMI = full launch recipe built from a snapshot, includes OS/software/
+  config metadata needed to boot a brand-new identical instance
+- IMDSv2 exists specifically to block SSRF-based credential theft: IMDSv1
+  allowed a plain, unauthenticated GET to return live role credentials.
+  A vulnerable web app that fetches attacker-supplied URLs (SSRF) could be
+  tricked into fetching the metadata endpoint FROM INSIDE the instance,
+  handing an attacker real AWS credentials with no direct server access
+  needed. IMDSv2's PUT-token requirement blocks most SSRF exploitation
+  because attackers usually only control a GET request's target, not a
+  PUT with a custom header. (Real-world precedent: Capital One 2019 breach)
+
+**Interview tips:**
+- Be able to explain snapshot vs AMI distinction precisely, not just
+  "they're both backups"
+- Know the SSRF + IMDSv1 attack chain end-to-end — this is a genuinely
+  common AWS security interview question
+- Mention unencrypted EBS volumes as a real audit red flag
+
+
+
+**Cleanup:**
+- Deregistered the AMI and deleted BOTH snapshots (the AMI's own auto-created
+  snapshot, separate from my original manual one) — confirmed empty via
+  `describe-images`/`describe-snapshots` afterward
+- Real lesson: deregistering an AMI does NOT delete its underlying snapshot
+  automatically — they're independent billable resources. A common real
+  cost leak is deregistering old AMIs and forgetting the snapshot underneath
+  keeps billing indefinitely
+- Decision: cleaned up rather than kept as a DR baseline, since this was a
+  learning exercise, not an active production safeguard
