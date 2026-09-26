@@ -57,3 +57,43 @@ permanently breaking a nip.io-based domain and forcing cert reissue.
 - Be ready to explain host key vs IP as separate identity concepts
 - Unattached/orphaned EIPs are a classic real-world cost leak — always
   mention checking for these in a cost-audit answer
+
+## M05-P02: Identity and credentials (CLI, STS, IMDS role credentials)
+
+**What I did:**
+- Confirmed no `~/.aws/credentials` file exists on the instance
+- `aws sts get-caller-identity` succeeded anyway — proved the instance
+  authenticates via an assumed IAM role, not stored keys
+- ARN showed `assumed-role/devops-blackbelt-ec2-role/i-068d097ced32d2ace`
+  and UserId prefix `AROA...` — both confirm "this is a role", not a user
+  (user prefix would be `AIDA...`, access key prefix `AKIA...`)
+- Walked the IMDSv2 chain directly:
+  1. PUT request to `/latest/api/token` — got a session token
+  2. GET `/latest/meta-data/iam/security-credentials/` with the token header
+     — returned the role name as plain text
+  3. GET the same path + role name — returned AccessKeyId, SecretAccessKey,
+     Token, and an Expiration timestamp (~6 hours out)
+
+**Real incident (self-inflicted):** pasted the actual temporary credentials
+into chat while documenting the output. Not a real breach since they're
+short-lived and expire automatically, but a genuine lesson: never paste
+AccessKeyId/SecretAccessKey/Token values anywhere outside the terminal —
+describe the *shape* of credential output, never the real values, even
+temporary ones.
+
+**Concepts learned:**
+- The CLI/boto3/Terraform all fetch role credentials from IMDS automatically
+  and silently — this is why zero configuration was needed on this instance.
+- Short-lived, auto-rotating credentials are a deliberate security design:
+  they cap the exposure window if credentials ever leak (as just demonstrated),
+  unlike a permanent IAM user's access key, which stays valid until manually
+  revoked.
+- Also visually re-learned from P01: terminal output can be easy to miss
+  when it runs together with the previous prompt line — always scroll up
+  and check carefully before concluding "nothing printed."
+
+**Interview tips:**
+- Be able to explain the full IMDS credential chain from memory: role
+  attached → IMDSv2 token → role name → temporary creds with expiration
+- Know why EC2 instance roles are the best-practice alternative to hardcoded
+  access keys, and why short expiry windows matter even for accidental leaks
