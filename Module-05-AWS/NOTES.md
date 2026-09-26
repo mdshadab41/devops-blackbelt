@@ -133,3 +133,46 @@ temporary ones.
   quoted, on a whiteboard or in a live coding round
 - Explain bucket-ARN vs bucket-ARN/* distinction without hesitating
 - Know how to identify user vs role vs access-key just from an ID prefix
+
+
+## M05-P04: S3 fundamentals (versioning, encryption, lifecycle)
+
+**What I did:**
+- Created bucket `devops-blackbelt-806528484602` (used account ID to
+  guarantee global uniqueness — S3 bucket names are unique across ALL
+  AWS accounts worldwide, not just mine)
+- Enabled versioning, uploaded the same key twice, confirmed via
+  `list-object-versions` that both versions exist simultaneously with
+  separate VersionIds
+- Deleted the object normally (`aws s3 rm`) — proved this only adds a
+  DeleteMarker, doesn't touch real data. Download 404'd, but both real
+  versions were still listed underneath
+- Recovered the "deleted" file by deleting the DeleteMarker's own
+  VersionId — download worked again, correct content returned
+- Checked encryption: SSE-S3 (AES256) was already active with NO
+  configuration from me — AWS made this the automatic default for all
+  new buckets since 2023
+- Applied a lifecycle rule (`NoncurrentVersionExpiration`, 30 days) to
+  auto-delete old versions and control the storage-cost growth that
+  versioning otherwise causes
+
+**Concepts learned:**
+- Bucket names are globally unique across every AWS account on Earth —
+  not just within my account
+- Many `put-*` CLI commands are silent on success — always verify with
+  a matching `get-*` call rather than assuming success from no output/error
+- Versioning ≠ backup by itself — it protects against accidental
+  overwrite/delete, but without a lifecycle rule, EVERY overwrite in an
+  active bucket accumulates full-size copies forever, creating a hidden,
+  compounding storage cost that doesn't show up in a casual bucket listing
+- SSE-S3 (AES256) is now AWS's zero-config default; SSE-KMS (customer-
+  managed keys, more control, more cost) is the alternative, covered in P13
+
+**Interview tips:**
+- Be able to explain the delete-marker mechanism precisely: a normal
+  delete on a versioned bucket doesn't remove data, it adds a marker
+  that hides the object until removed
+- Know why lifecycle rules matter specifically MORE for versioned
+  buckets than non-versioned ones (unbounded silent storage growth)
+- Know that SSE-S3 is now default-on, so "is my bucket encrypted?" isn't
+  automatically a red flag anymore — the real question is which type
