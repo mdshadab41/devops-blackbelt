@@ -97,3 +97,39 @@ temporary ones.
   attached → IMDSv2 token → role name → temporary creds with expiration
 - Know why EC2 instance roles are the best-practice alternative to hardcoded
   access keys, and why short expiry windows matter even for accidental leaks
+
+
+## M05-P03: IAM foundations (users, groups, roles, policy language)
+
+**What I did:**
+- Discovered an existing IAM user `monitor-admin` (console login), separate
+  from the EC2 role used all session — confirmed via ARN prefix (AIDA = user,
+  AROA = role)
+- Found `monitor-admin` has AmazonEC2FullAccess, AmazonS3FullAccess, and
+  IAMUserChangePassword attached DIRECTLY to the user (not via a group) —
+  `list-groups-for-user` returned empty. Anti-pattern: best practice is
+  users -> groups -> policies, not policies glued to individuals.
+- Fetched AmazonS3FullAccess policy JSON: Action ["s3:*", "s3-object-lambda:*"],
+  Resource "*" — confirmed FullAccess means literally every action, every resource
+- Wrote a least-privilege S3 policy from scratch (paper exercise, nothing
+  attached to any real resource):
+  Allow s3:GetObject + s3:ListBucket, scoped to one bucket
+
+**Real mistakes made and corrected (own work, not copied):**
+- First draft put ARNs in the Action field and "*" in Resource — backwards.
+  Corrected: Action = verbs (API calls), Resource = nouns (what they act on).
+- Missing JSON quotes/commas on first syntax attempt — fixed.
+
+**Concepts learned:**
+- IAM ARN prefixes: AIDA = user, AROA = role, AKIA = access key
+- Bucket-level actions (ListBucket) need the bare bucket ARN; object-level
+  actions (GetObject) need the ARN + /*. Using only one breaks the other —
+  this is the root cause behind the P17 S3 Access Denied incident.
+- Policies attached directly to a user vs. via a group is a real audit
+  finding — groups make permission management scale across a team.
+
+**Interview tips:**
+- Be able to write Effect/Action/Resource JSON from memory, correctly
+  quoted, on a whiteboard or in a live coding round
+- Explain bucket-ARN vs bucket-ARN/* distinction without hesitating
+- Know how to identify user vs role vs access-key just from an ID prefix
