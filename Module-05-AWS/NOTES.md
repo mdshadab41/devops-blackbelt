@@ -231,3 +231,63 @@ temporary ones.
   keeps billing indefinitely
 - Decision: cleaned up rather than kept as a DR baseline, since this was a
   learning exercise, not an active production safeguard
+## M05-P06: Write a least-privilege IAM policy from scratch
+
+**What I did:**
+- Created a real IAM policy (`devops-blackbelt-s3-readonly`) from the JSON
+  drafted on paper in P03: Allow s3:GetObject + s3:ListBucket, scoped to
+  `devops-blackbelt-806528484602` (both bucket ARN and /* object ARN)
+- Created a separate role (`devops-blackbelt-s3-readonly-role`) with its own
+  trust policy, rather than touching `monitor-admin` or the EC2 role
+- Used `aws iam simulate-custom-policy` to dry-run the policy before
+  attaching it for real — confirmed GetObject/ListBucket allowed,
+  DeleteObject/PutObject implicitDeny
+- Attached the policy to the role, assumed the role via STS, and proved
+  BOTH sides live against real AWS:
+  - Allowed: `aws s3 ls` and `aws s3 cp` (download) succeeded
+  - Denied: `aws s3 cp` (upload) and `aws s3 rm` both failed with precise
+    AccessDenied errors naming the exact action, resource, and identity
+
+**Real incident hit (not scripted):**
+- Tried extracting AccessKeyId/SecretAccessKey/SessionToken via three
+  separate `aws sts assume-role --query ...` calls — two of the three
+  variables silently ended up empty (length 0), even though the plain
+  assume-role call clearly returned all three fields. Diagnosed via
+  `${#VAR}` length checks rather than guessing.
+- Worse: once AWS_ACCESS_KEY_ID got set with no matching secret key, EVERY
+  subsequent AWS CLI call (including diagnostic ones) broke, because the
+  CLI prioritizes explicit env-var credentials over the EC2 instance role,
+  even when those env vars are incomplete. Had to `unset` all three
+  variables to fall back to the instance role before anything worked again.
+- Fix: capture the full `assume-role` JSON response ONCE into a variable,
+  then parse all three fields from that single response with Python,
+  instead of three separate CLI calls.
+
+**Concepts learned:**
+- Trust policy vs. permissions policy are different things: trust policy
+  (AssumeRolePolicyDocument) controls WHO can become the role; permissions
+  policy controls WHAT the role can do once assumed. A role can have a wide
+  trust policy and no permissions (harmless), or tight trust and broad
+  permissions (also harmless from an access standpoint) — both parts matter
+  independently.
+- The IAM policy simulator is useful but NOT a perfect substitute for a
+  real API call — it can return `allowed` for an action even when tested
+  against a resource ARN that doesn't match the action's real-world
+  scope (e.g., ListBucket against an object ARN still simulated as allowed
+  because the policy's Resource array contains BOTH ARNs in one statement).
+  Real proof only comes from an actual authenticated API call.
+- Explicit AWS_* environment variables always take priority over IMDS role
+  credentials in the CLI's credential chain — a partially-set environment
+  can silently break ALL subsequent calls, not just the one you're debugging.
+- AccessDenied error messages in S3/IAM are precise and self-documenting:
+  they name the identity, the action, the resource, and the reason — this
+  is the foundation of debugging P16 (IAM Permission Denied incident).
+
+**Interview tips:**
+- Be able to explain trust policy vs permissions policy without conflating
+  them — a very common point of confusion
+- Know that the AWS CLI credential chain checks environment variables
+  before instance role/IMDS — explains a whole class of "why did my AWS
+  CLI suddenly break" bugs
+- Be ready to read a real AccessDenied message and extract the action,
+  resource, and identity from it cold, without AWS's console UI
