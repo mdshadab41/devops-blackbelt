@@ -381,3 +381,66 @@ paying to run one continuously.
 - Understand why NAT Gateway exists conceptually even without having one
   running: private subnet needs OUTBOUND-only internet access without
   being reachable FROM the internet
+
+
+## M05-P08: Ship an artifact (S3 to EC2 via user data and instance role)
+
+**What I did:**
+- Created a tiny deployment artifact (shell script) and uploaded it to
+  s3://devops-blackbelt-806528484602/artifacts/
+- Built a dedicated instance role (`devops-blackbelt-deploy-role`) with a
+  trust policy scoped to `ec2.amazonaws.com` ONLY (not account root like
+  P06) — reused the existing `devops-blackbelt-s3-readonly` policy
+- Learned roles can't attach directly to an instance — they go through an
+  "instance profile" wrapper object, a separate create + attach step
+- Wrote a user data script to download + run the artifact automatically
+  on first boot, using the instance's own role credentials (same IMDS
+  mechanism proven by hand in P02, now used automatically by a script)
+- Launched a real instance with the instance profile + user data attached
+
+**Real incident hit (not scripted):**
+- First attempt failed completely: `aws: command not found` in
+  cloud-init-output.log. Root cause: a brand-new instance from a stock
+  AMI has NO AWS CLI installed — only my original instance has it,
+  because I installed it manually back in Module 00. User data scripts
+  run on a completely bare OS with none of my manual setup.
+  Diagnosed via `sudo cat /var/log/cloud-init-output.log`, which shows
+  exactly what ran and failed during boot — a genuinely useful debugging
+  tool I hadn't used before.
+- Fix: updated user data to install unzip/curl, download and install the
+  AWS CLI itself FIRST, before trying to use it. Also added a `chown
+  ubuntu:ubuntu` step at the end, since user data runs as root, so files
+  it creates are root-owned by default and need ownership handed back to
+  the ubuntu user for normal access afterward.
+- User data only runs on FIRST boot — can't "re-run" it on a broken
+  instance; had to terminate and launch fresh with the corrected script.
+
+**Verification methods used:**
+- `aws ec2 get-console-output` — the real no-SSH-needed production method,
+  but found it can lag behind actual boot completion (returned empty even
+  after status checks passed) — not fully reliable for immediate checks
+- SSH + direct file check — used as the reliable fallback, confirmed the
+  proof file's exact content including hostname and timestamp
+
+**Concepts learned:**
+- "Artifact" = any packaged, deployable build output (script, zip, binary,
+  Docker image) — not a special S3-specific term. Docker image = one KIND
+  of artifact, not a competing concept; different artifact types suit
+  different deployment targets
+- Trust policy's Principal can be scoped to an AWS SERVICE
+  (ec2.amazonaws.com), not just account/user ARNs — this is tighter
+  least-privilege than P06's account-root trust policy, since only actual
+  EC2 instances can ever assume this role, nothing else in the account
+- Role -> Instance Profile -> Instance is three separate objects/steps
+  via CLI (the Console does this invisibly in one click)
+- cloud-init-output.log is the definitive source of truth for what a user
+  data script actually did during boot — check this FIRST when a user
+  data script seems to have failed silently
+
+**Interview tips:**
+- Be able to explain why EC2-scoped trust policies are more secure than
+  account-scoped ones (narrower "who can assume this" surface)
+- Know that user data runs once, as root, on first boot only — and that a
+  bare AMI has none of the tooling a manually-configured instance has
+- Be ready to name cloud-init-output.log as the first debugging step for
+  "my user data script didn't work"
