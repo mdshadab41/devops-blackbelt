@@ -291,3 +291,93 @@ temporary ones.
   CLI suddenly break" bugs
 - Be ready to read a real AccessDenied message and extract the action,
   resource, and identity from it cold, without AWS's console UI
+
+
+## Quick reference: Security Group vs NACL vs ufw/iptables
+
+- **Security Group** — AWS firewall, instance-level, stateful, allow-only
+  (no explicit deny), configured via AWS API/console/CLI, blocks traffic
+  before it ever reaches the instance.
+- **NACL (Network ACL)** — AWS firewall, subnet-level, stateless (inbound
+  and outbound rules evaluated separately), supports both allow and deny,
+  applies to everything in the subnet regardless of instance.
+- **ufw/iptables** — OS-level firewall, stateful, allow and deny,
+  configured by logging into the instance itself; only works if the OS
+  is running and the firewall service is active.
+
+**Order of enforcement:** Internet → IGW → Route Table → NACL (subnet) →
+Security Group (instance) → ufw/iptables (OS) → application.
+
+
+## M05-P07: Custom VPC from scratch (explored default VPC first)
+
+**What I did — explored the default VPC:**
+- Found the default VPC (172.31.0.0/16) and its 3 subnets, one per AZ
+  (ap-south-1a/b/c), each a /20
+- Learned manual CIDR math: /20 = 4096 addresses, calculated which subnet
+  my instance's IP (172.31.13.66) falls into by hand, verified correct
+- Discovered my instance's subnet had NO explicit route table association
+  — it silently inherits the VPC's main route table (a real, non-obvious
+  AWS default)
+- Traced the main route table: local route (172.31.0.0/16) + internet
+  route (0.0.0.0/0 -> IGW) — this is literally what makes a subnet "public"
+- Worked through the full SSH reachability chain: IGW + route table +
+  public IP + Security Group + ufw all have to independently allow traffic
+  — explained why SSH "just worked" all module without me setting anything
+  up, because the default VPC does ALL of this automatically
+
+**What I did — built a custom VPC by hand:**
+- Created VPC `vpc-0a8a0fbdabe47335b` (10.0.0.0/24, 256 addresses)
+- Created public subnet (10.0.0.0/26, ap-south-1a) and private subnet
+  (10.0.0.64/26, ap-south-1b) — proved no CIDR overlap
+- Created and attached an Internet Gateway (confirmed attaching is a
+  SEPARATE step from creating — not automatic, unlike the default VPC)
+- Created a route table, confirmed the "local" route is automatic but the
+  internet route (0.0.0.0/0 -> IGW) must be added manually
+- Explicitly associated the route table with the public subnet
+- Enabled auto-assign public IP on the public subnet
+  (MapPublicIpOnLaunch) — confirmed false by default, even after routing
+  was correctly wired
+- Created a VPC-scoped Security Group (learned Security Groups can't span
+  VPCs, since ambiguous overlapping CIDR ranges across VPCs would make
+  rule references meaningless)
+- Launched a real test instance into the public subnet — confirmed it
+  got a public IP automatically and reached `running` state, proving the
+  whole chain works end-to-end
+- Terminated the test instance immediately after proof (cost control) —
+  confirmed the auto-assigned public IP vanished with no cleanup needed,
+  unlike an Elastic IP which would keep billing until released
+
+**Decision:** kept the VPC/subnets/IGW/route table/Security Group, since
+all of these are genuinely free while idle — only a running instance or
+a NAT Gateway would cost money, and neither currently exists in this VPC.
+Did NOT create a NAT Gateway (private subnet has no internet route) to
+avoid its hourly + data transfer cost; understand the concept without
+paying to run one continuously.
+
+**Concepts learned:**
+- CIDR math: /n means 32-n host bits, 2^(32-n) addresses. AWS reserves 5
+  addresses per subnet for internal use regardless of subnet size.
+- A subnet is "public" only because its (explicitly or implicitly
+  inherited) route table sends 0.0.0.0/0 to an IGW — never because of a
+  name or tag
+- Security Group (instance-level, stateful, allow-only) vs NACL
+  (subnet-level, stateless, allow+deny) vs ufw/iptables (OS-level,
+  stateful, allow+deny) — three independent layers, each catching
+  different misconfiguration mistakes
+- sshd is the actual OpenSSH server process/daemon — the final
+  APPLICATION-level check (does this key match?), separate from every
+  earlier NETWORK-level check (can the packet even arrive?)
+- VPC/subnet/route table/IGW/Security Group cost nothing while idle;
+  only running compute (instances) and specific managed services (NAT
+  Gateway, Elastic IP when unattached) actually bill
+
+**Interview tips:**
+- Be able to draw the full packet path from memory: Internet -> IGW ->
+  Route Table -> NACL -> Security Group -> ufw/iptables -> sshd
+- Know that attaching an IGW is a separate step from creating one, and
+  that route table association is explicit-or-inherited-from-main, never
+  automatic for a non-default VPC
+- Understand why NAT Gateway exists conceptually even without having one
+  running: private subnet needs OUTBOUND-only internet access without
+  being reachable FROM the internet
