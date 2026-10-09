@@ -444,3 +444,50 @@ paying to run one continuously.
   bare AMI has none of the tooling a manually-configured instance has
 - Be ready to name cloud-init-output.log as the first debugging step for
   "my user data script didn't work"
+
+## M05-P09: SNS and EventBridge basics
+
+**What I did:**
+- Created an SNS topic (`devops-blackbelt-alerts`), subscribed my real
+  email, confirmed via the email link, published a test message, and
+  verified it actually arrived in my inbox — full pub-sub chain proven
+- Examined the topic's auto-created default resource policy: looked
+  wide-open (`Principal: "*"`) at first glance, but a Condition scoped
+  it to my own account only (`AWS:SourceOwner`) — not actually public
+- Learned the hard way (before running anything): `set-topic-attributes`
+  REPLACES the entire policy, it does not merge/append. Had to rebuild
+  the full policy document with BOTH the original default statement AND
+  the new EventBridge statement included together, or I would have
+  silently lost my own management permissions on the topic
+- Created an EventBridge rule matching ANY EC2 instance state-change
+  event in the account (no instance-ID filter), targeted at the SNS topic
+- Proved it live: launched and terminated a real test instance, received
+  exactly 4 emails — one for each state transition (pending, running,
+  shutting-down, terminated) — zero manual publish commands involved
+- Disabled (not deleted) the rule afterward, since it had no instance
+  filter and would otherwise email me for every instance state change
+  for the rest of the module
+
+**Concepts learned:**
+- SNS requires explicit email confirmation before delivery starts — a
+  deliberate anti-spam/anti-abuse safety measure
+- Resource policies (SNS topic policy, and the same pattern applies to S3
+  bucket policies, KMS key policies) are REPLACE operations, not merges —
+  always read the existing policy first and include it in full before
+  applying any change, or risk losing existing permissions
+- An instance's lifecycle generates MULTIPLE distinct state-change events,
+  not one — pending AND running on launch; shutting-down AND terminated
+  on termination. An unfiltered EventBridge rule fires on all of them
+- Disabling an EventBridge rule preserves its definition for later reuse;
+  deleting would lose the configured pattern and target entirely
+
+**Interview tips:**
+- Be able to explain SNS (push-based pub/sub, you define the message) vs
+  EventBridge (reactive, AWS services generate the events, you define
+  matching rules) as genuinely different tools for different triggers
+- Know that AWS resource policies are wholesale replacements, not patches
+  — this is a classic real-world "I thought I was adding a rule but I
+  actually wiped the whole policy" incident
+- Be ready to explain why an unfiltered alerting rule causes alert
+  fatigue, and how to scope rules down (instance ID, tags, specific
+  states) to avoid it in production
