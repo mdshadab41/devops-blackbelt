@@ -491,3 +491,85 @@ paying to run one continuously.
 - Be ready to explain why an unfiltered alerting rule causes alert
   fatigue, and how to scope rules down (instance ID, tags, specific
   states) to avoid it in production
+
+
+## M05-P10: Lambda fundamentals
+
+**What I did:**
+- Wrote a minimal Python Lambda function, learned the hard way that a
+  heredoc (`cat << EOF`) can silently strip leading whitespace/indentation
+  during paste over SSH — caught it with `cat -A` before deploying broken
+  code, fixed by using nano directly instead
+- Packaged the function as a zip (same "artifact" concept as P08, just a
+  different format Lambda requires)
+- Created a dedicated execution role (`devops-blackbelt-lambda-role`),
+  trust policy scoped to `lambda.amazonaws.com` only — same least-
+  privilege "who can assume this" pattern as P08's EC2 role
+- Attached `AWSLambdaBasicExecutionRole` (AWS managed policy) for
+  CloudWatch Logs write access — the minimum a Lambda needs to be
+  debuggable at all
+- Created the function with `aws lambda create-function`, learned the
+  handler string format: `filename.function_name` (no .py extension)
+- Invoked it synchronously via `aws lambda invoke`, confirmed the full
+  round trip: payload sent in, processed, structured response returned
+- Read real CloudWatch logs via `aws logs tail` and saw cold start
+  (`INIT_START` present, Init Duration 90.78ms) vs warm start (`INIT_START`
+  absent entirely) directly, with real numbers:
+  - Cold call: Duration 1.91ms, Billed Duration 93ms (includes init cost)
+  - Warm call: Duration ~48ms, Billed Duration 48ms (no init cost, but
+    small run-to-run variance is normal/expected and not meaningful on
+    its own — INIT_START presence/absence is the real structural signal,
+    not millisecond-level Duration noise)
+- Deleted the function and role afterward (concept proven, nothing later
+  in Module 05 reuses this specific function; real auto-remediation
+  Lambda work is deferred to Module 18)
+
+**Concepts learned:**
+- Lambda pricing = requests + (billed duration x memory allocated),
+  billed duration rounds up to the nearest ms and INCLUDES cold-start
+  init time on a function's first invocation
+- Handler string = `filename.function_name`, the explicit wiring AWS
+  needs since it can't guess your file/function names
+- `context.get_remaining_time_in_millis()` lets a function check its own
+  timeout budget mid-execution — useful for graceful handling of
+  near-timeout situations (save progress, exit cleanly) in real workloads
+- Cold start = AWS provisioning a brand new execution environment
+  (interpreter init, dependency loading); warm start = reusing an
+  existing one. The presence/absence of INIT_START in logs is the
+  reliable signal, not comparing raw Duration numbers between calls
+- Provisioned concurrency exists as a paid feature to eliminate cold
+  starts for latency-sensitive production functions (didn't configure
+  it — adds ongoing cost, just worth knowing it exists)
+- IAM won't delete a role with policies still attached — must detach
+  first, a safety guardrail against accidentally orphaning permissions
+
+**Interview tips:**
+- Be able to explain cold vs warm start with real numbers, not just the
+  definition — mention INIT_START as the concrete signal in CloudWatch
+  Logs
+- Know the Lambda pricing formula precisely: requests + duration x memory,
+  and that init time counts toward billed duration on cold starts
+- Be ready to explain when Lambda fits (event-driven, short-lived,
+  variable/unpredictable load) vs when EC2 fits better (long-running
+  processes, needs persistent local state, predictable constant load
+  where a reserved/always-on instance is cheaper than per-invocation
+  billing)
+
+**Concept notes:**
+- Lambda runs code with no server to manage — no EC2 instance, no OS
+  patching. You upload code, AWS runs it on-demand when triggered (API
+  call, schedule, S3 event, EventBridge rule, etc.)
+- Pricing is fundamentally different from EC2: EC2 bills for the instance
+  running continuously regardless of load; Lambda bills only for actual
+  invocations (requests) and the compute time x memory they consume,
+  billed per millisecond
+- Two invocation types: SYNCHRONOUS (caller waits for the result
+  immediately, like a direct API call) and ASYNCHRONOUS (caller fires and
+  moves on, AWS queues/processes in the background, like an EventBridge
+  rule targeting a Lambda instead of SNS directly)
+- Cold start vs warm start: a cold start happens when AWS has to
+  provision a brand new execution environment (interpreter boot,
+  dependency loading) before running your code — this has real,
+  measurable latency cost. A warm start reuses an already-running
+  environment from a recent invocation — much faster, since the
+  provisioning step is skipped entirely.
