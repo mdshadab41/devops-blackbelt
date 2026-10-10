@@ -573,3 +573,75 @@ paying to run one continuously.
   measurable latency cost. A warm start reuses an already-running
   environment from a recent invocation — much faster, since the
   provisioning step is skipped entirely.
+
+
+## M05-P11: CloudWatch metrics, logs, alarms, notifying through SNS
+
+**Concept notes:**
+- CPUCreditBalance/CPUCreditUsage (t3 burstable CPU model): think of it as
+  a water tank with a slow-filling tap. The tap drips in credits
+  continuously (baseline allowance, free, always). CPUCreditUsage = how
+  fast you're draining the tank when demanding MORE than baseline.
+  CPUCreditBalance = how much is currently saved up. Hit zero while still
+  demanding more, and AWS throttles CPU back to baseline only.
+- MetadataNoToken: counts how many times something queried instance
+  metadata WITHOUT an IMDSv2 token (the insecure, old way) — high count
+  = a red flag that something isn't using the secure method from P01/P05
+
+**What I did:**
+- Explored available EC2 metrics with zero configuration: CPU, network,
+  EBS I/O, status checks, and t3-specific CPU credit metrics, all
+  collected automatically
+- Pulled real CPUCreditBalance data — confirmed it climbing steadily
+  (41 -> 50 over 50 min) during an idle period, matching the "water tank
+  refilling" model
+- Created a CloudWatch alarm on CPUUtilization with a deliberately LOW
+  threshold (1%) wired to the P09 SNS topic — triggered ALARM state
+  almost immediately since baseline OS activity exceeds 1%
+- Received a real alarm email with EXACT data: measured value (2.75%),
+  threshold (1.0), and timestamp — same self-documenting pattern as
+  IAM AccessDenied errors from P06
+- Updated the alarm to a realistic threshold (70%, 5-min period), added
+  `--ok-actions` so BOTH alarm-triggered AND alarm-recovered states
+  notify via email
+- Confirmed state settled to OK once CPU was genuinely below the new
+  threshold — proved the full ALARM -> OK lifecycle with real evidence
+
+**Real incident hit (not scripted):**
+- Pasted multi-flag `aws cloudwatch put-metric-alarm` and `--query`
+  commands repeatedly failed with bash syntax errors / jmespath parse
+  errors. Root cause: curly/smart quotes (" ") in the pasted text instead
+  of straight quotes ("), likely from whatever app/keyboard the text was
+  typed in before pasting into the terminal — bash only accepts straight
+  quotes as string delimiters.
+- Fix: typed commands fresh into `nano` as .sh script files, then ran
+  with `bash scriptname.sh`, instead of pasting one-liners directly into
+  the terminal — bypassed the quote-mangling entirely since typing
+  directly in the terminal/nano produces correct straight quotes.
+
+**Concepts learned:**
+- An alarm's --period and --evaluation-periods together define: how
+  often to check (period, in seconds) and how many consecutive bad
+  checks are needed before firing (evaluation-periods) — e.g.
+  period=300, evaluation-periods=1 means "check every 5 min, fire on the
+  very first bad reading"
+- --alarm-actions fires on breach; --ok-actions (separate, optional)
+  fires on recovery back to OK — both can point at the same SNS topic
+- CloudWatch alarm notification emails are self-documenting: exact
+  measured value, exact threshold, exact timestamp — no guessing needed
+  to understand why an alarm fired
+- Smart/curly quotes from pasted text are invisible-looking but break
+  bash entirely — when a command with quotes fails with a confusing
+  syntax error, check for this before assuming the command itself is wrong
+
+**Interview tips:**
+- Be able to explain period x evaluation-periods precisely — this is a
+  common alarm-tuning question (balancing fast detection vs avoiding
+  false positives from brief spikes)
+- Know CPU credits conceptually (the "water tank" model) well enough to
+  explain WHY a t3 instance might suddenly slow down despite "looking
+  fine" on CPUUtilization alone — this is exactly what P19 will have me
+  diagnose as a full incident
+- Be ready to debug "command fails with a weird syntax error" by
+  checking for smart quotes / non-ASCII characters from copy-paste —
+  a real, recurring practical issue, not just theory
